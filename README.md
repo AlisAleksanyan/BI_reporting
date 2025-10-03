@@ -4,7 +4,7 @@ A Streamlit web application for managing and analyzing retail agenda data.
 This demo uses fake sample data, but the original project was built with real company data.
 It includes the full data processing pipeline: from raw extraction, cleaning, and transformation to creating readable reports and dashboards.
 
-## Features
+### Features
 
 Automated ETL pipeline: raw data → cleaned & structured datasets (via GitHub Actions)
 
@@ -16,7 +16,7 @@ Daily automated reporting with export options
 
 User-friendly filters: date, region, shop, area manager
 
-## Real Project (Production Setup)
+### Real Project (Production Setup)
 
 The real project was significantly more advanced and enabled near real-time reporting:
 
@@ -44,4 +44,4 @@ Streamlit app fetched data from GitHub API in near real time.
 
 Provided dashboards, KPIs, and exports directly to business users.
 
-## Result: Business users gained access to real-time agenda reporting, replacing manual spreadsheets with a fully automated, auditable, and always up-to-date solution.
+### Result: Business users gained access to real-time agenda reporting, replacing manual spreadsheets with a fully automated, auditable, and always up-to-date solution.
