@@ -14,7 +14,7 @@ Interactive tables & charts for shop and area manager performance
 
 Daily automated reporting with export options
 
-User-friendly filters: date, region, shop, area manager
+User-friendly filters: date, region, shop, etc.
 
 ### Real Project (Production Setup)
 
@@ -24,7 +24,7 @@ The real project was significantly more advanced and enabled near real-time repo
 
 Extracted raw agenda and operations data directly from the company ERP.
 
-Multiple relational tables used (appointments, shops, resources, area mappings).
+Multiple relational tables used (appointments, shops, resources, area mappings, etc.).
 
 2. Automation: Power Automate
 
