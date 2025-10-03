@@ -1,5 +1,7 @@
 # ---- LOCAL-ONLY STREAMLIT APP (no GitHub/API) ----
-import os, io, json, calendar
+import os, io, json, base64, calendar, requests
+from io import BytesIO
+from urllib.parse import quote
 from datetime import datetime, timedelta, date
 import numpy as np
 import pandas as pd
@@ -9,6 +11,19 @@ from st_aggrid import GridOptionsBuilder, AgGrid, JsCode
 from st_aggrid.shared import GridUpdateMode, DataReturnMode, ColumnsAutoSizeMode, AgGridTheme, ExcelExportMode
 import pytz
 st.set_page_config(layout="wide")
+# --- GitHub credentials from Streamlit secrets ---
+github_secrets = st.secrets.get("github")
+if not github_secrets:
+    st.error("FATAL: Missing '[github]' section in Streamlit secrets!")
+    st.stop()
+
+GITHUB_TOKEN = github_secrets.get("token")
+REPO_FULL = github_secrets.get("repo")
+if not GITHUB_TOKEN or not REPO_FULL or "/" not in REPO_FULL:
+    st.error("FATAL: Missing or malformed github.token / github.repo ('owner/name').")
+    st.stop()
+
+REPO_OWNER, REPO_NAME = REPO_FULL.split("/", 1)
 
 # ---------- Helpers ----------
 def find_last_working_day(start_date: datetime) -> datetime:
@@ -44,29 +59,86 @@ def get_start_and_end_of_current_month():
     month_end = today.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
     return month_start, month_end
 
-@st.cache_data(ttl="30m", show_spinner=False)
-def read_excel_local(path: str, **pd_kwargs) -> pd.DataFrame | None:
+# -------------- GitHub helpers (commit-keyed caching) --------------
+
+@st.cache_data(ttl="0", show_spinner=False)  # cache commit lookups ~30 min
+def get_latest_commit(repo_owner: str, repo_name: str, path_in_repo: str, token: str):
+    """
+    Returns (sha, committed_datetime_utc) of the latest commit that touched the path.
+    If no commits, returns (None, None).
+    """
+    encoded = quote(path_in_repo.replace("\\", "/"))
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/commits?path={encoded}&page=1&per_page=1"
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
     try:
-        if not os.path.exists(path):
-            return None
-        df = pd.read_excel(path, **pd_kwargs)
-        return None if df is None or df.empty else df
+        r = requests.get(url, headers=headers, timeout=20)
+        r.raise_for_status()
+        commits = r.json()
+        if not commits:
+            return None, None
+        sha = commits[0]["sha"]
+        dt_str = commits[0]["commit"]["committer"]["date"]  # ISO with Z
+        committed_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        return sha, committed_dt
+    except Exception:
+        return None, None
+
+
+def _download_github_file(repo_owner: str, repo_name: str, path_in_repo: str, token: str) -> bytes | None:
+    """
+    Efficiently downloads a repo file via Contents API.
+    Handles small (<1MB) and large files (via download_url).
+    """
+    path_in_repo = path_in_repo.replace("\\", "/")
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{path_in_repo}"
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
+
+    meta = requests.get(url, headers=headers, timeout=30)
+    if meta.status_code == 404:
+        return None
+    meta.raise_for_status()
+    data = meta.json()
+
+    if data.get("download_url"):
+        raw = requests.get(data["download_url"], headers={'Authorization': f'token {token}'}, timeout=120)
+        raw.raise_for_status()
+        return raw.content
+
+    if "content" in data and data["content"]:
+        return base64.b64decode(data["content"])
+
+    return None
+
+
+@st.cache_data(show_spinner=False)  # cache by arguments; the SHA argument busts cache on file change
+def load_excel_from_github(repo_owner: str, repo_name: str, path_in_repo: str, token: str, commit_sha: str, **pd_kwargs) -> pd.DataFrame | None:
+    """
+    Load Excel from GitHub; cache is keyed by commit_sha.
+    When the file is updated on GitHub, its latest SHA changes → cache invalidates automatically.
+    """
+    raw = _download_github_file(repo_owner, repo_name, path_in_repo, token)
+    if raw is None:
+        return None
+    try:
+        return pd.read_excel(BytesIO(raw), **pd_kwargs)
     except Exception as e:
-        st.warning(f"Error reading '{path}': {e}")
+        st.warning(f"Error reading Excel '{path_in_repo}': {e}")
         return None
 
-@st.cache_data(ttl="30m", show_spinner=False)
-def load_shift_slots_best_effort(today_path: str, yday_path: str, last_working_path: str):
-    """
-    Try today's file, then yesterday, then last working day.
-    Returns (df, loaded_path) or (None, None) if all fail.
-    """
-    for p in [today_path, yday_path, last_working_path]:
-        df = read_excel_local(p)
-        if df is not None:
-            return df, p
-    return None, None
 
+def load_best_effort_github(paths_in_repo: list[str], *, repo_owner: str, repo_name: str, token: str, **pd_kwargs):
+    """
+    Try a list of repo paths (today, yesterday, last working day...).
+    Returns (df, used_path, commit_dt_utc) or (None, None, None).
+    """
+    for p in paths_in_repo:
+        sha, commit_dt = get_latest_commit(repo_owner, repo_name, p, token)
+        if not sha:
+            continue
+        df = load_excel_from_github(repo_owner, repo_name, p, token, sha, **pd_kwargs)
+        if df is not None and not df.empty:
+            return df, p, commit_dt
+    return None, None, None
 # ---------- UI Styles ----------
 st.markdown(
     """
@@ -88,7 +160,9 @@ st.markdown(
 st.markdown('<h1 class="custom-title">AGENDA APP</h1>', unsafe_allow_html=True)
 
 # ---------- Dates / Paths ----------
-folder_path = 'shiftslots'
+# ---------- Dates / Paths (unchanged date logic) ----------
+folder_path_in_repo = "shiftslots"  # this is the repo folder
+
 month_start_date, month_end_date = get_start_and_end_of_current_month()
 current_date = datetime.now()
 yesterday_date = current_date - timedelta(days=1)
@@ -99,40 +173,47 @@ if current_date.weekday() == 0:  # Monday
 else:
     last_working_day = find_last_working_day(current_date)
 
-today_file_path = os.path.join(folder_path, f"shiftslots_{current_date.strftime('%Y-%m-%d')}.xlsx")
-yesterday_file_path = os.path.join(folder_path, f"shiftslots_{yesterday_date.strftime('%Y-%m-%d')}.xlsx")
-last_working_day_file_path = os.path.join(folder_path, f"shiftslots_{last_working_day.strftime('%Y-%m-%d')}.xlsx")
+# Build repo-relative file paths
+today_repo_path = f"{folder_path_in_repo}/shiftslots_{current_date.strftime('%Y-%m-%d')}.xlsx"
+yday_repo_path = f"{folder_path_in_repo}/shiftslots_{yesterday_date.strftime('%Y-%m-%d')}.xlsx"
+lwd_repo_path = f"{folder_path_in_repo}/shiftslots_{last_working_day.strftime('%Y-%m-%d')}.xlsx"
+month_first_repo_path = f"{folder_path_in_repo}/shiftslots_{month_start_date.strftime('%Y-%m-%d')}.xlsx"
 
-# Also need month-first file (your original used it as 'sep6')
-sep6_file_path = os.path.join(folder_path, f"shiftslots_{month_start_date.strftime('%Y-%m-%d')}.xlsx")
-
-# ---------- Load main datasets (LOCAL) ----------
-with st.spinner("📂 Loading local Excel files..."):
-    shift_slots, loaded_shift_slots_path = load_shift_slots_best_effort(
-        today_file_path, yesterday_file_path, last_working_day_file_path
+with st.spinner("⬇️ Loading agenda data from GitHub..."):
+    shift_slots, used_repo_path, commit_dt_utc = load_best_effort_github(
+        [today_repo_path, yday_repo_path, lwd_repo_path],
+        repo_owner=REPO_OWNER, repo_name=REPO_NAME, token=GITHUB_TOKEN
     )
     if shift_slots is None:
-        st.error("FATAL: No valid agenda data could be loaded from local folder.")
+        st.error("FATAL: No valid agenda data could be loaded from GitHub.")
         st.stop()
 
-    # Display file modification time in Europe/Madrid
-    try:
-        mtime = os.path.getmtime(loaded_shift_slots_path)
-        local_dt = datetime.fromtimestamp(mtime, tz=pytz.timezone("Europe/Madrid"))
-        st.write("Last updated:", local_dt.strftime('%Y-%m-%d %H:%M:%S'))
-    except Exception:
-        pass
+    # nice "last updated" in Europe/Madrid
+    if commit_dt_utc:
+        madrid = pytz.timezone("Europe/Madrid")
+        st.write("Last updated:", commit_dt_utc.astimezone(madrid).strftime("%Y-%m-%d %H:%M:%S"), " — ", used_repo_path)
 
-    shift_slots_yesterday = read_excel_local(yesterday_file_path)
-    if shift_slots_yesterday is None:
-        fb_date = find_last_working_day(yesterday_date)
-        shift_slots_yesterday = read_excel_local(os.path.join(folder_path, f"shiftslots_{fb_date.strftime('%Y-%m-%d')}.xlsx"))
+    # Load “yesterday” fallback (if not already used)
+    shift_slots_yesterday, _, _ = load_best_effort_github(
+        [yday_repo_path, lwd_repo_path],
+        repo_owner=REPO_OWNER, repo_name=REPO_NAME, token=GITHUB_TOKEN
+    )
 
-    shift_slots_sep6 = read_excel_local(sep6_file_path)
+    # Month-first (your “sep6”)
+    shift_slots_sep6, _, _ = load_best_effort_github(
+        [month_first_repo_path],
+        repo_owner=REPO_OWNER, repo_name=REPO_NAME, token=GITHUB_TOKEN
+    )
 
-# Secondary local files
-hcm = read_excel_local(os.path.join('output', 'hcm_sf_merged.xlsx'))
-cluster = read_excel_local(os.path.join('output', 'cluster_data.xlsx'))
+# Secondary files from repo (adjust paths if needed)
+hcm, _, _ = load_best_effort_github(
+    ["output/hcm_sf_merged.xlsx"],
+    repo_owner=REPO_OWNER, repo_name=REPO_NAME, token=GITHUB_TOKEN
+)
+cluster, _, _ = load_best_effort_github(
+    ["output/cluster_data.xlsx"],
+    repo_owner=REPO_OWNER, repo_name=REPO_NAME, token=GITHUB_TOKEN
+)
 
 # ---------- Sidebar: ISO week / Region / Area / Category / Shop / Top100 ----------
 current_iso_year, current_iso_week, _ = datetime.now().isocalendar()
@@ -1797,5 +1878,6 @@ with tab6:
             file_name="sf_vs_hcm_comparacion.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
