@@ -152,19 +152,16 @@ def _get_file_sha_if_exists(repo_owner: str, repo_name: str, path_in_repo: str, 
 # --- helper: create/update a file in GitHub (idempotent) ---
 def github_upsert_file(owner, repo, path, token, content_bytes, message):
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
-    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
-
-    # Get current SHA if the file exists
+    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+    # fetch existing SHA (if any)
     r = requests.get(url, headers=headers, timeout=30)
     sha = r.json().get("sha") if r.status_code == 200 else None
-
     payload = {
         "message": message,
         "content": base64.b64encode(content_bytes).decode("utf-8"),
     }
     if sha:
         payload["sha"] = sha
-
     resp = requests.put(url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
     return resp.json()
@@ -1909,113 +1906,145 @@ with tab6:
             file_name="sf_vs_hcm_comparacion.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 with tab9:
     st.subheader("HRBP Tasks")
 
     if filtered_hcm is None or filtered_hcm.empty:
         st.info("No HCM data available for the selected filters.")
+        st.stop()
+
+    # 1) Build the live table from HCM mismatches (diff != 0) and rename headers to English
+    must_have = ["Shop Code", "Resource Name", "Duración SF", "Duración HCM", "Diferencia de hcm duración"]
+    missing = [c for c in must_have if c not in filtered_hcm.columns]
+    if missing:
+        st.error(f"Missing columns in HCM data: {missing}")
+        st.stop()
+
+    live_df = (
+        filtered_hcm[must_have]
+        .query("`Diferencia de hcm duración` != 0")
+        .rename(columns={
+            "Duración SF": "SF Duration",
+            "Duración HCM": "HCM Duration",
+            "Diferencia de hcm duración": "HCM Duration Difference",
+        })
+        .reset_index(drop=True)
+    )
+
+    # 2) Load persisted Tasks.csv (source of truth for Action/Details) and left-merge
+    tasks_repo_path = "output/Tasks.csv"
+    persisted_bytes = _download_github_file(REPO_OWNER, REPO_NAME, tasks_repo_path, GITHUB_TOKEN)
+    if persisted_bytes is not None:
+        try:
+            persisted_df = pd.read_csv(BytesIO(persisted_bytes))
+        except Exception:
+            persisted_df = pd.DataFrame(columns=["Shop Code", "Resource Name", "Action", "Details"])
     else:
-        # Base input & filter (show only mismatches)
-        base_cols_es = ["Shop Code", "Resource Name", "Duración SF", "Duración HCM", "Diferencia de hcm duración"]
-        missing = [c for c in base_cols_es if c not in filtered_hcm.columns]
-        if missing:
-            st.error(f"Missing expected columns in HCM: {missing}")
-        else:
-            tasks_df = (
-                filtered_hcm[base_cols_es]
-                .copy()
-                .query("`Diferencia de hcm duración` != 0")
-                .reset_index(drop=True)
-            )
+        persisted_df = pd.DataFrame(columns=["Shop Code", "Resource Name", "Action", "Details"])
 
-            # Rename to English
-            tasks_df.rename(columns={
-                "Duración SF": "SF Duration",
-                "Duración HCM": "HCM Duration",
-                "Diferencia de hcm duración": "HCM Duration Difference",
-            }, inplace=True)
+    if not {"Shop Code","Resource Name","Action","Details"}.issubset(persisted_df.columns):
+        # normalize columns in case the CSV was manually edited
+        for col in ["Shop Code","Resource Name","Action","Details"]:
+            if col not in persisted_df.columns:
+                persisted_df[col] = ""
+        persisted_df = persisted_df[["Shop Code","Resource Name","Action","Details"]]
 
-            # Load previous Actions/Details, if any
-            tasks_path_in_repo = "output/Tasks.csv"
-            prior_bytes = _download_github_file(REPO_OWNER, REPO_NAME, tasks_path_in_repo, GITHUB_TOKEN)
-            if prior_bytes is not None:
-                try:
-                    prior_df = pd.read_csv(BytesIO(prior_bytes))
-                    if {"Shop Code","Resource Name","Action","Details"}.issubset(prior_df.columns):
-                        tasks_df = tasks_df.merge(
-                            prior_df[["Shop Code","Resource Name","Action","Details"]],
-                            on=["Shop Code","Resource Name"],
-                            how="left"
-                        )
-                except Exception:
-                    pass  # ignore malformed prior file
+    # Merge persisted actions into the current mismatches view
+    table_df = live_df.merge(
+        persisted_df[["Shop Code","Resource Name","Action","Details"]],
+        on=["Shop Code","Resource Name"],
+        how="left"
+    )
 
-            # Ensure editable columns exist
-            if "Action" not in tasks_df.columns: tasks_df["Action"] = ""
-            if "Details" not in tasks_df.columns: tasks_df["Details"] = ""
+    # Set defaults for editables
+    table_df["Action"]  = table_df["Action"].fillna("")
+    table_df["Details"] = table_df["Details"].fillna("")
 
-            st.caption(":green[*Update Action & Details, then click **Save changes** to commit a Tasks.csv to Git.*]")
+    st.caption(":green[*Edit **Action** and **Details** below. Click **Save changes** to commit to Git; everyone will immediately see the updates.*]")
 
-            action_choices = ["", "IT problem", "HR problem", "To be investigated", "No action possible"]
+    # 3) Editable grid
+    action_choices = ["", "IT problem", "HR problem", "To be investigated", "No action possible"]
 
-            # Build editable grid
-            gb_tasks = GridOptionsBuilder.from_dataframe(tasks_df)
-            gb_tasks.configure_column(
-                "Action",
-                editable=True,
-                cellEditor="agSelectCellEditor",
-                cellEditorParams={"values": action_choices},
-                width=170,
-            )
-            gb_tasks.configure_column(
-                "Details",
-                editable=True,
-                width=320,
-            )
-            for c in ["SF Duration", "HCM Duration", "HCM Duration Difference"]:
-                gb_tasks.configure_column(c, editable=False, type=["numericColumn"], cellClass="ag-right-aligned-cell")
+    gb = GridOptionsBuilder.from_dataframe(table_df)
+    # Lock numeric/metric columns
+    for c in ["SF Duration", "HCM Duration", "HCM Duration Difference"]:
+        gb.configure_column(c, editable=False, type=["numericColumn"], cellClass="ag-right-aligned-cell")
+    gb.configure_column(
+        "Action",
+        editable=True,
+        cellEditor="agSelectCellEditor",
+        cellEditorParams={"values": action_choices},
+        width=180,
+    )
+    gb.configure_column("Details", editable=True, width=380)
+    gb.configure_grid_options(domLayout='normal', enableRangeSelection=True, suppressRowClickSelection=True)
+    grid_opts = gb.build()
 
-            gb_tasks.configure_grid_options(domLayout='normal', enableRangeSelection=True, suppressRowClickSelection=True)
-            grid_options = gb_tasks.build()
+    grid = AgGrid(
+        table_df,
+        gridOptions=grid_opts,
+        enable_enterprise_modules=True,
+        allow_unsafe_jscode=True,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        data_return_mode=DataReturnMode.AS_INPUT,
+        fit_columns_on_grid_load=True,
+        height=min(max(len(table_df) * 36, 320), 720),
+        theme="streamlit",
+    )
+    edited_df = pd.DataFrame(grid["data"])
 
-            grid_response = AgGrid(
-                tasks_df,
-                gridOptions=grid_options,
-                enable_enterprise_modules=True,
-                allow_unsafe_jscode=True,
-                update_mode=GridUpdateMode.VALUE_CHANGED,
-                data_return_mode=DataReturnMode.AS_INPUT,
-                fit_columns_on_grid_load=True,
-                height=min(max(len(tasks_df) * 35, 300), 700),
-                theme='streamlit'
-            )
+    export_cols = [
+        "Shop Code",
+        "Resource Name",
+        "SF Duration",
+        "HCM Duration",
+        "HCM Duration Difference",
+        "Action",
+        "Details",
+    ]
 
-            edited_df = pd.DataFrame(grid_response["data"])
+    c1, c2 = st.columns([1, 4])
+    with c1:
+        if st.button("💾 Save changes", type="primary", use_container_width=True):
+            try:
+                # 4) Persist: merge back into the *persisted* source-of-truth and commit
+                #    - Keep any actions for pairs not currently mismatching (so history isn't lost)
+                latest_actions = edited_df[["Shop Code","Resource Name","Action","Details"]].copy()
 
-            # Make export_cols available to BOTH save & download
-            export_cols = ["Shop Code", "Resource Name", "SF Duration", "HCM Duration", "HCM Duration Difference", "Action", "Details"]
-            # Keep only expected columns (in case grid injects extras)
-            export_cols = [c for c in export_cols if c in edited_df.columns]
+                # Deduplicate keys (last edit wins)
+                latest_actions = latest_actions.drop_duplicates(subset=["Shop Code","Resource Name"], keep="last")
 
-            left, right = st.columns([1, 4])
+                # Update/insert into persisted_df by key
+                base = persisted_df.copy()
+                if base.empty:
+                    merged_persisted = latest_actions
+                else:
+                    # remove any keys being updated, then append latest
+                    idx = pd.MultiIndex.from_frame(base[["Shop Code","Resource Name"]])
+                    upd_idx = pd.MultiIndex.from_frame(latest_actions[["Shop Code","Resource Name"]])
+                    keep_mask = ~idx.isin(upd_idx)
+                    merged_persisted = pd.concat([base.loc[keep_mask], latest_actions], ignore_index=True)
 
-            with left:
-                if st.button("💾 Save changes", type="primary", use_container_width=True):
-                    try:
-                        csv_bytes = edited_df[export_cols].to_csv(index=False).encode("utf-8")
-                        commit_msg = f"chore(tasks): update Tasks.csv via app ({datetime.utcnow().isoformat()}Z)"
-                        github_upsert_file(
-                            REPO_OWNER, REPO_NAME, tasks_path_in_repo, GITHUB_TOKEN, csv_bytes, commit_msg
-                        )
-                        st.success("Tasks saved and committed to GitHub ✅")
-                    except Exception as e:
-                        st.error(f"Failed to save tasks: {e}")
-
-            with right:
-                st.download_button(
-                    "⬇️ Download current table as CSV",
-                    edited_df[export_cols].to_csv(index=False).encode("utf-8"),
-                    file_name="Tasks.csv",
-                    mime="text/csv",
-                    use_container_width=True
+                # Commit to GitHub
+                csv_bytes = merged_persisted.to_csv(index=False).encode("utf-8")
+                commit_msg = f"chore(tasks): update Tasks.csv via app ({datetime.utcnow().isoformat()}Z)"
+                github_upsert_file(
+                    REPO_OWNER, REPO_NAME, tasks_repo_path, GITHUB_TOKEN, csv_bytes, commit_msg
                 )
+
+                # Clear any Streamlit caches and rerun so everyone sees the new file immediately
+                st.cache_data.clear()
+                st.success("Tasks saved to GitHub ✅ Reloading …")
+                st.experimental_rerun()
+            except Exception as e:
+                st.error(f"Failed to save tasks: {e}")
+
+    with c2:
+        st.download_button(
+            "⬇️ Download current table as CSV",
+            edited_df[export_cols].to_csv(index=False).encode("utf-8"),
+            file_name="Tasks.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
