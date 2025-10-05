@@ -1828,35 +1828,40 @@ with tab6:
     fig_bar.update_layout(yaxis_title="Count", xaxis_title="Region")
     
     # --- Donut chart: Action Distribution ---
+    # --- Donut chart: Action Distribution ---
     if "Clave compuesta" in mismatch.columns and not actions_df.empty:
         allowed = ["No action possible", "Support Ticket", "HR Ticket", "IT Ticket", "Solved"]
         merged_actions = (
             merged.loc[merged["Action"].isin(allowed)]
-                  .groupby("Action")
+                  .groupby("Action", dropna=False)
                   .size()
                   .reset_index(name="count")
                   .sort_values("count", ascending=False)
         )
-
-
     else:
-        merged_actions = pd.DataFrame(columns=["Category", "count"])
+        merged_actions = pd.DataFrame(columns=["Action", "count"])
     
-    fig_pie = px.pie(
-        merged_actions,
-        names="Action",
-        values="count",
-        hole=0.5,
-        title="Action Distribution (HCM-SF Difference)",
-        color="Category",
-        color_discrete_map={
-            "No action possible": "#5570ff",  # blue
-            "Support Ticket": "#f1b84b",      # amber
-            "HR Ticket": "#cc0641",           # red
-            "Solved": "#b5a642",              # olive-gold
-            "IT Ticket": "#f86b52"            # orange-red
-        }
-    )
+    if merged_actions.empty:
+        st.info("No actions to display yet.")
+        fig_pie = px.pie(pd.DataFrame({"Action": ["No data"], "count": [1]}),
+                         names="Action", values="count", hole=0.5,
+                         title="Action Distribution (HCM-SF Difference)")
+    else:
+        fig_pie = px.pie(
+            merged_actions,
+            names="Action",
+            values="count",
+            hole=0.5,
+            title="Action Distribution (HCM-SF Difference)",
+            color="Action",
+            color_discrete_map={
+                "No action possible": "#5570ff",  # blue
+                "Support Ticket": "#f1b84b",      # amber
+                "HR Ticket": "#cc0641",           # red
+                "Solved": "#b5a642",              # olive-gold
+                "IT Ticket": "#f86b52"            # orange-red
+            }
+        )
     
     # --- Layout side by side ---
     c1, c2 = st.columns([1.25, 1])
@@ -2227,6 +2232,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
