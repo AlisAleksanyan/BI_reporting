@@ -2216,7 +2216,7 @@ with tab9:
                 # Clear any Streamlit caches and rerun so everyone sees the new file immediately
                 st.cache_data.clear()
                 st.success("Tasks saved to GitHub ✅ Reloading …")
-                st.experimental_rerun()
+                st.rerun()
             except Exception as e:
                 st.error(f"Failed to save tasks: {e}")
 
@@ -2228,6 +2228,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
