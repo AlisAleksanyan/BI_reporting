@@ -1796,14 +1796,10 @@ with tab6:
     actions_df = _load_persisted_actions()
     if "Clave compuesta" in mismatch.columns and not actions_df.empty:
         merged = mismatch.merge(actions_df, on="Clave compuesta", how="left")
-        managed = merged.groupby("Region")["Action"].apply(lambda x: x.astype(str).str.strip().ne("").sum()).reset_index(name="Managed")
-        fixed = merged.groupby("Region")["Action"] \
-            .apply(lambda x: x.isin(["Solved"]).sum()) \
-            .reset_index(name="Fixed")
-        by_region = by_region.merge(managed, on="Region", how="left").merge(fixed, on="Region", how="left")
+        solved = merged.groupby("Region")["Action"].apply(lambda x: x.isin(["Solved"]).sum()).reset_index(name="Solved")
+        by_region = by_region.merge(solved, on="Region", how="left")
     else:
-        by_region["Managed"] = 0
-        by_region["Fixed"] = 0
+        by_region["Solved"] = 0
     
     by_region = by_region.fillna(0)
     
@@ -1822,7 +1818,7 @@ with tab6:
             "IT Ticket": "#f86b52",
             "No action": "#cccccc"
         },
-        title="Tasks vs Managed per Region (HCM-SF Difference)"
+        title="Tasks vs Solved per Region (HCM-SF Difference)"    
     )
     fig_bar.update_traces(textposition="outside")
     fig_bar.update_layout(yaxis_title="Count", xaxis_title="Region")
@@ -2232,6 +2228,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
