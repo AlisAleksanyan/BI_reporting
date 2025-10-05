@@ -1790,7 +1790,7 @@ with tab6:
         tasks_df = _load_tasks_only()
         
         if tasks_df.empty:
-            st.info("No tasks found in Tasks.csv yet.")
+            st.info("No managed tasks found yet.")
         else:
             # Enrich tasks with Region + iso_week using filtered_hcm (same keys, current filters)
             if KEY in filtered_hcm.columns:
@@ -1808,7 +1808,7 @@ with tab6:
             tasks_week = tasks_enriched[tasks_enriched["iso_week"] == int(iso_week_filter)].copy()
         
             if tasks_week.empty:
-                st.info(f"No tasks in Tasks.csv for ISO week {iso_week_filter}.")
+                st.info(f"No task for ISO week {iso_week_filter}.")
             else:
                 tasks_week["Region"] = tasks_week["Region"].fillna("Unknown")
         
@@ -2238,6 +2238,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
