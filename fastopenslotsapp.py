@@ -1909,14 +1909,14 @@ with tab9:
     st.subheader("HRBP Tasks")
 
     # --- Key and required columns
-    KEY = "Clave computsa"
+    KEY = "Clave compuesta"
     required_cols = [KEY, "Shop Code", "Resource Name", "Duración SF", "Duración HCM", "Diferencia de hcm duración"]
     missing = [c for c in required_cols if c not in filtered_hcm.columns]
     if missing:
         st.error(f"Missing columns in HCM data: {missing}")
         st.stop()
 
-    # Live rows: one per unique Clave computsa where diff != 0
+    # Live rows: one per unique Clave compuesta where diff != 0
     live_df = (
         filtered_hcm[required_cols]
         .copy()
@@ -1931,3 +1931,4 @@ with tab9:
         "Duración HCM": "HCM Duration",
         "Diferencia de hcm duración": "HCM Duration Difference"
     })
+
