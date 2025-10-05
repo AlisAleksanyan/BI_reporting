@@ -1767,105 +1767,115 @@ with tab6:
         with c3: kpi(c3, "First-Visit %", cur['first'], ref['first'], better_is_down=False)
         with c4: kpi(c4, "After-Sales %", cur['after'], ref['after'], better_is_down=True)
     # ===== Tasks: summary (place this right before the "SF vs HCM Comparison" subheader) =====
-    st.subheader("Tasks: summary", divider="gray")
-
-    # Filter mismatches for selected ISO week
-    mismatch = filtered_hcm.copy()
-    mismatch = mismatch[mismatch["iso_week"] == int(iso_week_filter)]
-    mismatch = mismatch[mismatch["Diferencia de hcm duración"] != 0].copy()
-    mismatch["Region"] = mismatch["Region"].fillna("Unknown")
-    
-    # --- Bar chart: Tasks vs Managed per Region ---
-    by_region = (
-        mismatch.groupby("Region", dropna=False)
-        .size()
-        .reset_index(name="Total Tasks")
-    )
-    
-    # Load actions and merge by key
-    def _load_persisted_actions():
-        raw = _download_github_file(REPO_OWNER, REPO_NAME, "output/Tasks.csv", GITHUB_TOKEN)
-        if raw is None:
-            return pd.DataFrame(columns=["Clave compuesta", "Action"])
-        try:
-            df = pd.read_csv(BytesIO(raw))
-        except Exception:
-            df = pd.read_csv(BytesIO(raw), sep=";")
-        return df
-    
-    actions_df = _load_persisted_actions()
-    if "Clave compuesta" in mismatch.columns and not actions_df.empty:
-        merged = mismatch.merge(actions_df, on="Clave compuesta", how="left")
-        solved = merged.groupby("Region")["Action"].apply(lambda x: x.isin(["Solved"]).sum()).reset_index(name="Solved")
-        by_region = by_region.merge(solved, on="Region", how="left")
-    else:
-        by_region["Solved"] = 0
-    
-    by_region = by_region.fillna(0)
-    
-    fig_bar = px.bar(
-        by_region.melt(id_vars="Region", var_name="Type", value_name="Count"),
-        x="Region",
-        y="Count",
-        color="Type",
-        barmode="group",
-        text="Count",
-        color_discrete_map={
-            "No action possible": "#5570ff",
-            "Support Ticket": "#f1b84b",
-            "HR Ticket": "#cc0641",
-            "Solved": "#b5a642",
-            "IT Ticket": "#f86b52",
-            "No action": "#cccccc"
-        },
-        title="Tasks vs Solved per Region (HCM-SF Difference)"    
-    )
-    fig_bar.update_traces(textposition="outside")
-    fig_bar.update_layout(yaxis_title="Count", xaxis_title="Region")
-    
-    # --- Donut chart: Action Distribution ---
-    # --- Donut chart: Action Distribution ---
-    if "Clave compuesta" in mismatch.columns and not actions_df.empty:
-        allowed = ["No action possible", "Support Ticket", "HR Ticket", "IT Ticket", "Solved"]
-        merged_actions = (
-            merged.loc[merged["Action"].isin(allowed)]
-                  .groupby("Action", dropna=False)
-                  .size()
-                  .reset_index(name="count")
-                  .sort_values("count", ascending=False)
-        )
-    else:
-        merged_actions = pd.DataFrame(columns=["Action", "count"])
-    
-    if merged_actions.empty:
-        st.info("No actions to display yet.")
-        fig_pie = px.pie(pd.DataFrame({"Action": ["No data"], "count": [1]}),
-                         names="Action", values="count", hole=0.5,
-                         title="Action Distribution (HCM-SF Difference)")
-    else:
-        fig_pie = px.pie(
-            merged_actions,
-            names="Action",
-            values="count",
-            hole=0.5,
-            title="Action Distribution (HCM-SF Difference)",
-            color="Action",
-            color_discrete_map={
-                "No action possible": "#5570ff",  # blue
-                "Support Ticket": "#f1b84b",      # amber
-                "HR Ticket": "#cc0641",           # red
-                "Solved": "#b5a642",              # olive-gold
-                "IT Ticket": "#f86b52"            # orange-red
-            }
-        )
-    
-    # --- Layout side by side ---
-    c1, c2 = st.columns([1.25, 1])
-    with c1:
-        st.plotly_chart(fig_bar, use_container_width=True)
-    with c2:
-        st.plotly_chart(fig_pie, use_container_width=True)
-
+        st.subheader("Tasks: summary", divider="gray")
+        
+        KEY = "Clave compuesta"
+        tasks_repo_path = "output/Tasks.csv"
+        
+        def _load_tasks_only():
+            raw = _download_github_file(REPO_OWNER, REPO_NAME, tasks_repo_path, GITHUB_TOKEN)
+            base_cols = [KEY, "Action", "Details", "updated_at"]
+            if raw is None:
+                return pd.DataFrame(columns=base_cols)
+            try:
+                df = pd.read_csv(BytesIO(raw))
+            except Exception:
+                df = pd.read_csv(BytesIO(raw), sep=";")
+            # normalize
+            for c in base_cols:
+                if c not in df.columns:
+                    df[c] = "" if c != "updated_at" else pd.NaT
+            return df[base_cols]
+        
+        tasks_df = _load_tasks_only()
+        
+        if tasks_df.empty:
+            st.info("No tasks found in Tasks.csv yet.")
+        else:
+            # Enrich tasks with Region + iso_week using filtered_hcm (same keys, current filters)
+            if KEY in filtered_hcm.columns:
+                enrich_cols = [KEY, "Region", "iso_week"]
+                tasks_enriched = tasks_df.merge(
+                    filtered_hcm[enrich_cols].drop_duplicates(subset=[KEY]),
+                    on=KEY, how="left"
+                )
+            else:
+                tasks_enriched = tasks_df.copy()
+                tasks_enriched["Region"] = np.nan
+                tasks_enriched["iso_week"] = np.nan
+        
+            # Focus on the selected ISO week from sidebar
+            tasks_week = tasks_enriched[tasks_enriched["iso_week"] == int(iso_week_filter)].copy()
+        
+            if tasks_week.empty:
+                st.info(f"No tasks in Tasks.csv for ISO week {iso_week_filter}.")
+            else:
+                tasks_week["Region"] = tasks_week["Region"].fillna("Unknown")
+        
+                # --- Bar chart: Total Tasks vs Solved per Region (from Tasks.csv only) ---
+                by_region = (
+                    tasks_week.groupby("Region", dropna=False).size().reset_index(name="Total Tasks")
+                )
+                solved_counts = (
+                    tasks_week.assign(is_solved=tasks_week["Action"].eq("Solved"))
+                              .groupby("Region")["is_solved"].sum()
+                              .reset_index(name="Solved")
+                )
+                by_region = by_region.merge(solved_counts, on="Region", how="left").fillna(0)
+        
+                fig_bar = px.bar(
+                    by_region.melt(id_vars="Region", var_name="Type", value_name="Count"),
+                    x="Region",
+                    y="Count",
+                    color="Type",
+                    barmode="group",
+                    text="Count",
+                    color_discrete_map={
+                        "No action possible": "#5570ff",
+                        "Support Ticket": "#f1b84b",
+                        "HR Ticket": "#cc0641",
+                        "Solved": "#b5a642",
+                        "IT Ticket": "#f86b52",
+                        "Total Tasks": "#5570ff"  # keep visible if legend mixes in
+                    },
+                    title=f"Tasks vs Solved per Region (ISO week {iso_week_filter})"
+                )
+                fig_bar.update_traces(textposition="outside")
+                fig_bar.update_layout(yaxis_title="Count", xaxis_title="Region")
+        
+                # --- Donut chart: Action distribution (from Tasks.csv only) ---
+                allowed_actions = ["No action possible", "Support Ticket", "HR Ticket", "IT Ticket", "Solved"]
+                dist = (tasks_week[tasks_week["Action"].isin(allowed_actions)]
+                        .groupby("Action", dropna=False).size()
+                        .reset_index(name="count")
+                        .sort_values("count", ascending=False))
+        
+                if dist.empty:
+                    fig_pie = px.pie(
+                        pd.DataFrame({"Action": ["No data"], "count": [1]}),
+                        names="Action", values="count", hole=0.5,
+                        title=f"Action Distribution (ISO week {iso_week_filter})"
+                    )
+                else:
+                    fig_pie = px.pie(
+                        dist, names="Action", values="count", hole=0.5,
+                        title=f"Action Distribution (ISO week {iso_week_filter})",
+                        color="Action",
+                        color_discrete_map={
+                            "No action possible": "#5570ff",
+                            "Support Ticket": "#f1b84b",
+                            "HR Ticket": "#cc0641",
+                            "Solved": "#b5a642",
+                            "IT Ticket": "#f86b52"
+                        }
+                    )
+        
+                # Layout
+                c1, c2 = st.columns([1.25, 1])
+                with c1:
+                    st.plotly_chart(fig_bar, use_container_width=True)
+                with c2:
+                    st.plotly_chart(fig_pie, use_container_width=True)
 
     st.subheader("SF vs HCM Comparison", divider="gray")
 
@@ -2228,6 +2238,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
