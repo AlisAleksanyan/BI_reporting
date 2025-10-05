@@ -1865,7 +1865,7 @@ with tab6:
         st.plotly_chart(fig_pie, use_container_width=True)
 
 
-st.subheader("SF vs HCM Comparison", divider="gray")
+    st.subheader("SF vs HCM Comparison", divider="gray")
 
 
     # Warning messages for empty data
@@ -1873,12 +1873,12 @@ st.subheader("SF vs HCM Comparison", divider="gray")
         st.warning("No shops found for the selected filter criteria.")
     if weekly_shift_slots_yesterday.empty:
         st.warning("No shops found for the selected filter criteria.")
-
+    
     
     hcm_weekly_diff = filtered_hcm.groupby('iso_week').agg(
         total_diff=('Diferencia de hcm duración', 'sum')
     ).reset_index()
-
+    
     # Create HCM vs SF line chart
     fig_diff = px.line(
         hcm_weekly_diff,
@@ -1899,29 +1899,29 @@ st.subheader("SF vs HCM Comparison", divider="gray")
     st.plotly_chart(fig_diff, use_container_width=True)
     # Display the table in a full row below the chart and top shops
     st.subheader("SF vs HCM Comparison (Weekly)")
-
+    
     # Get all unique weeks in the dataset
     available_weeks = sorted(filtered_hcm["iso_week"].unique())
-
+    
     table_rows = []
-
+    
     for w in available_weeks:  # Iterate over all unique weeks
         week_data = filtered_hcm[filtered_hcm["iso_week"] == w]
         sf_total = week_data["Duración SF"].sum()
         hcm_total = week_data["Duración HCM"].sum()
-
+    
         delta = sf_total- hcm_total 
         delta_pct = (delta / sf_total * 100) if sf_total != 0 else 0
-
+    
         shop_group = week_data.groupby("Shop Name", dropna=False).agg({
             "Duración SF": "sum",
             "Duración HCM": "sum"
         }).reset_index()
-
+    
         n_hcm_gt_sf = (shop_group["Duración HCM"] > shop_group["Duración SF"]).sum()
         n_sf_gt_hcm = (shop_group["Duración SF"] > shop_group["Duración HCM"]).sum()
         n_sf_eq_hcm = (shop_group["Duración SF"] == shop_group["Duración HCM"]).sum()
-
+    
         table_rows.append({
             "Week": w,
             "SF": sf_total if pd.notna(sf_total) else 0,  # Default to 0 if missing
@@ -1932,8 +1932,8 @@ st.subheader("SF vs HCM Comparison", divider="gray")
             "SF>HCM": n_sf_gt_hcm,
             "SF=HCM": n_sf_eq_hcm
         })
-
-
+    
+    
     results_df = pd.DataFrame(table_rows)
     # Round numeric columns to 1 decimal place
     results_df = results_df.round(1)
@@ -1941,10 +1941,10 @@ st.subheader("SF vs HCM Comparison", divider="gray")
     results_df["HCM"] = results_df["HCM"].apply(lambda x: f"{x:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."))
     results_df["Delta"] = results_df["Delta"].apply(lambda x: f"{x:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."))
     results_df["Delta %"] = results_df["Delta %"].apply(lambda x: f"{x:,.0f}%".replace(",", "X").replace(".", ",").replace("X", "."))
-
+    
     # Build AgGrid options
     gb = GridOptionsBuilder.from_dataframe(results_df)
-
+    
     # Define custom CSS for header cells
     custom_css = {
         ".ag-header-cell": {
@@ -1954,7 +1954,7 @@ st.subheader("SF vs HCM Comparison", divider="gray")
             "padding": "4px" 
         }
     }
-
+    
         # Configure columns with fixed widths
     columns_config = [
         {"field": "Week", "width": 100, "cellClass": "ag-cell-right-aligned", "headerClass": "custom-header-right-align"},
@@ -1966,7 +1966,7 @@ st.subheader("SF vs HCM Comparison", divider="gray")
         {"field": "SF>HCM", "width": 100, "cellClass": "ag-cell-right-aligned", "headerClass": "custom-header-right-align"},
         {"field": "SF=HCM", "width": 100, "cellClass": "ag-cell-right-aligned", "headerClass": "custom-header-right-align"}
     ]
-
+    
     for col in columns_config:
         gb.configure_column(
             col["field"],
@@ -1974,16 +1974,16 @@ st.subheader("SF vs HCM Comparison", divider="gray")
             cellClass=col["cellClass"],
             headerClass=col["headerClass"]
         )
-
+    
     gb.configure_grid_options(
         domLayout='normal',
         suppressSizeToFit=True,  
         enableFillHandle=True
     )
-
+    
     # Build grid options
     grid_options = gb.build()
-
+    
     # Render the AG-Grid in Streamlit
     AgGrid(
         results_df,
@@ -2226,6 +2226,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
