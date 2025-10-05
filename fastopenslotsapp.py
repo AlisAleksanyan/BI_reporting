@@ -2038,7 +2038,7 @@ with tab9:
     # Where to store the actions CSV in your repo
     tasks_repo_path = "output/Tasks.csv"
     st.markdown(f'''
-        :green[*Goal: This section helps track and manage data discrepancies between systems, assign actions, and monitor progress on issue resolution to ensure consistent and reliable workforce data.*]
+        :green[*Goal:  Users can input details about identified issues directly in this table to support collaboration and follow-up. This section helps track and manage data discrepancies between systems, assign actions, and monitor progress on issue resolution to ensure consistent and reliable workforce data.*]
         ''')
 
     @st.cache_data(ttl=0, show_spinner=False)
@@ -2258,6 +2258,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
