@@ -2136,7 +2136,7 @@ with tab9:
     gb = GridOptionsBuilder.from_dataframe(table_df)
     
     # 1) Hide the composite key column in the grid
-    gb.configure_column(KEY, hide=True)
+    gb.configure_column(KEY,iso_year_week, hide=True)
     
     # 2) Make "Action" editable as a dropdown; "Details" free text
     gb.configure_default_column(editable=False, resizable=True)
@@ -2257,6 +2257,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
