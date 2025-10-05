@@ -1796,7 +1796,7 @@ with tab6:
             if KEY in filtered_hcm.columns:
                 enrich_cols = [KEY, "Region", "iso_week"]
                 tasks_enriched = tasks_df.merge(
-                    filtered_hcm[enrich_cols].drop_duplicates(subset=[KEY]),
+                    hcm[enrich_cols].drop_duplicates(subset=[KEY]),
                     on=KEY, how="left"
                 )
             else:
@@ -2238,6 +2238,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
