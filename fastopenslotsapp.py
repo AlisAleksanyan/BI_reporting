@@ -1766,6 +1766,91 @@ with tab6:
         with c2: kpi(c2, "Blocks %",      cur['blocks'],ref['blocks'],better_is_down=True)
         with c3: kpi(c3, "First-Visit %", cur['first'], ref['first'], better_is_down=False)
         with c4: kpi(c4, "After-Sales %", cur['after'], ref['after'], better_is_down=True)
+    # ===== Tasks: summary (place this right before the "SF vs HCM Comparison" subheader) =====
+    st.subheader("Tasks: summary", divider="gray")
+
+    # Build the mismatch set for the selected ISO week (already filtered in filtered_hcm)
+    mismatch = filtered_hcm.copy()
+    mismatch = mismatch[mismatch["iso_week"] == int(iso_week_filter)]
+    mismatch = mismatch[mismatch["Diferencia de hcm duración"] != 0].copy()
+    mismatch["Region"] = mismatch["Region"].fillna("Unknown")
+    
+    # --- Bar chart: # of mismatches per Region ---
+    by_region = (
+        mismatch.groupby("Region", dropna=False)
+        .size()
+        .reset_index(name="Count")
+        .sort_values("Count", ascending=False)
+    )
+    fig_bar = px.bar(
+        by_region,
+        x="Region",
+        y="Count",
+        text="Count",
+        title="Tareas con diferencia HCM vs SF por Región",
+    )
+    fig_bar.update_traces(textposition="outside")
+    fig_bar.update_layout(yaxis_title="Count", xaxis_title="Region")
+    # -------
+    
+    # --- Action distribution (donut) ---
+    # Load persisted actions directly from GitHub, then join to current mismatches by key
+    def _load_persisted_actions():
+        raw = _download_github_file(REPO_OWNER, REPO_NAME, "output/Tasks.csv", GITHUB_TOKEN)
+        if raw is None:
+            return pd.DataFrame(columns=["Clave compuesta", "Action"])
+        try:
+            df = pd.read_csv(BytesIO(raw))
+        except Exception:
+            df = pd.read_csv(BytesIO(raw), sep=";")
+        for col in ["Clave compuesta", "Action"]:
+            if col not in df.columns:
+                df[col] = ""
+        return df[["Clave compuesta", "Action"]]
+    
+    actions_df = _load_persisted_actions()
+    
+    # Keep only keys in scope (this week & mismatching)
+    need_cols = ["Clave compuesta"]
+    if "Clave compuesta" not in mismatch.columns:
+        # If key is missing, just show empty pie safely
+        merged_actions = pd.DataFrame(columns=["Category", "count"])
+    else:
+        tmp = mismatch[need_cols].drop_duplicates()
+        merged = tmp.merge(actions_df, on="Clave compuesta", how="left")
+    
+        # Map to Spanish display labels similar to your example
+        label_map = {
+            "No action possible": "No acción posible",
+            "HR problem": "Ticket HR",
+            "IT problem": "Ticket IT",
+            "To be investigated": "Ticket Soporte",
+            "": "Sin acción",
+            None: "Sin acción",
+        }
+        merged["Category"] = merged["Action"].map(label_map).fillna("Otros")
+        merged_actions = (
+            merged.groupby("Category")
+            .size()
+            .reset_index(name="count")
+            .sort_values("count", ascending=False)
+        )
+    
+    fig_pie = px.pie(
+        merged_actions,
+        names="Category",
+        values="count",
+        hole=0.5,
+        title="Distribución para HCM vs SF (Acciones)",
+    )
+    
+    # --- Lay them out side by side ---
+    c1, c2 = st.columns([1.25, 1])
+    with c1:
+        st.plotly_chart(fig_bar, use_container_width=True)
+    with c2:
+        st.plotly_chart(fig_pie, use_container_width=True)
+    # ===== end Tasks: summary =====
 
     st.subheader("SF vs HCM Comparison", divider="gray")
 
@@ -2128,6 +2213,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
