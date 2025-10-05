@@ -2005,13 +2005,61 @@ with tab9:
 
     # --- AgGrid with editable Action dropdown + Details free text (unchanged) ---
     gb = GridOptionsBuilder.from_dataframe(table_df)
+    
+    # 1) Hide the composite key column in the grid
+    gb.configure_column(KEY, hide=True)
+    
+    # 2) Make "Action" editable as a dropdown; "Details" free text
     gb.configure_default_column(editable=False, resizable=True)
-    gb.configure_column("Action", editable=True, cellEditor="agSelectCellEditor",
-                        cellEditorParams={"values": ["", "IT problem", "HR problem", "To be investigated", "No action possible"]})
+    gb.configure_column(
+        "Action",
+        editable=True,
+        cellEditor="agSelectCellEditor",
+        cellEditorParams={"values": ["", "IT problem", "HR problem", "To be investigated", "No action possible"]}
+    )
     gb.configure_column("Details", editable=True)
-    gb.configure_grid_options(rowSelection="single", animateRows=True)
+    
+    # 3) Row-level styling: turn the whole row green/white if Action is selected
+    get_row_style = JsCode("""
+    function(params) {
+        if (params.data && params.data.Action && params.data.Action.toString().trim() !== "") {
+            return {
+                'background-color': '#95cd41',
+                'color': 'white',
+                'font-weight': 'bold'
+            };
+        }
+        return null;
+    }
+    """)
+    
+    gb.configure_grid_options(
+        rowSelection="single",
+        animateRows=True,
+        getRowStyle=get_row_style,   # <- apply the row styling
+    )
+    
     grid_options = gb.build()
-
+    
+    # 4) Header style: red background, white text (match other tabs)
+    custom_css_tasks = {
+        ".ag-header-cell": {
+            "background-color": "#cc0641 !important",
+            "color": "white !important",
+            "font-weight": "bold",
+            "padding": "4px"
+        },
+        ".ag-header-group-cell": {
+            "background-color": "#cc0641 !important",
+            "color": "white !important",
+            "font-weight": "bold"
+        },
+        ".ag-theme-streamlit .ag-root-wrapper": {
+            "border": "2px solid #cc0641",
+            "border-radius": "5px"
+        }
+    }
+    
     grid_resp = AgGrid(
         table_df,
         gridOptions=grid_options,
@@ -2022,10 +2070,12 @@ with tab9:
         theme="streamlit",
         height=min(600, 60 + 28*max(5, len(table_df))),
         fit_columns_on_grid_load=True,
+        custom_css=custom_css_tasks,  # <- red header + border
     )
+    
     edited_df = grid_resp["data"].copy()
-
-
+    
+    
     export_cols = [
         "Shop Code",
         "Resource Name",
@@ -2078,6 +2128,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
