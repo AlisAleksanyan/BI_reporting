@@ -1905,18 +1905,20 @@ with tab6:
             file_name="sf_vs_hcm_comparacion.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+
 with tab9:
     st.subheader("HRBP Tasks")
 
     # --- Key and required columns
-    KEY = "Clave compuesta"
+    KEY = "Clave computsa"
     required_cols = [KEY, "Shop Code", "Resource Name", "Duración SF", "Duración HCM", "Diferencia de hcm duración"]
     missing = [c for c in required_cols if c not in filtered_hcm.columns]
     if missing:
         st.error(f"Missing columns in HCM data: {missing}")
         st.stop()
 
-    # Live rows: one per unique Clave compuesta where diff != 0
+    # Live rows: one per unique Clave computsa where diff != 0
     live_df = (
         filtered_hcm[required_cols]
         .copy()
@@ -1931,4 +1933,61 @@ with tab9:
         "Duración HCM": "HCM Duration",
         "Diferencia de hcm duración": "HCM Duration Difference"
     })
+    table_df = live_df.merge(persisted_df, on=KEY, how="left")
+    table_df["Action"]  = table_df["Action"].fillna("")
+    table_df["Details"] = table_df["Details"].fillna("")
+    table_df = table_df.drop_duplicates(subset=[KEY], keep="first").reset_index(drop=True)
+
+    # Columns order for display
+    display_cols = [KEY, "Shop Code", "Resource Name", "SF Duration", "HCM Duration", "HCM Duration Difference", "Action", "Details"]
+    table_df = table_df[display_cols]
+
+    st.caption("Edit the Action/Details per row. Use Save to persist to Git.")
+
+    # --- AgGrid with editable Action dropdown + Details free text
+    gb = GridOptionsBuilder.from_dataframe(table_df)
+    gb.configure_default_column(editable=False, resizable=True)
+    gb.configure_column("Action", editable=True, cellEditor="agSelectCellEditor",
+                        cellEditorParams={"values": ["", "IT problem", "HR problem", "To be investigated", "No action possible"]})
+    gb.configure_column("Details", editable=True)
+    gb.configure_grid_options(rowSelection="single", animateRows=True)
+    grid_options = gb.build()
+
+    grid_resp = AgGrid(
+        table_df,
+        gridOptions=grid_options,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        enable_enterprise_modules=True,
+        allow_unsafe_jscode=True,
+        theme="streamlit",
+        height=min(600, 60 + 28*max(5, len(table_df))),
+        fit_columns_on_grid_load=True,
+    )
+    edited_df = grid_resp["data"].copy()
+    if st.button("💾 Save tasks to Git", type="primary", use_container_width=True):
+        try:
+            # Only keep the fields we persist
+            payload = edited_df[[KEY, "Action", "Details"]].copy()
+            payload["updated_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+            # Merge into previously persisted (upsert by key)
+            base = persisted_df.copy()
+            base = base.drop_duplicates(subset=[KEY], keep="last")
+            # Remove keys that are in payload
+            if not base.empty:
+                base = base[~base[KEY].isin(payload[KEY])]
+
+            merged = pd.concat([base, payload], ignore_index=True)
+            merged = merged.drop_duplicates(subset=[KEY], keep="last")
+
+            csv_bytes = merged.to_csv(index=False).encode("utf-8")
+            commit_msg = f"chore(tasks): upsert Tasks.csv from app ({datetime.utcnow().isoformat(timespec='seconds')}Z)"
+            github_upsert_file(REPO_OWNER, REPO_NAME, tasks_repo_path, GITHUB_TOKEN, csv_bytes, commit_msg)
+
+            st.cache_data.clear()
+            st.success("Tasks saved to Git. Reloading…")
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Failed to save tasks: {e}")
 
