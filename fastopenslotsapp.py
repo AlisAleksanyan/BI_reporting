@@ -1910,7 +1910,7 @@ with tab9:
     st.subheader("HRBP Tasks")
 
     # --- Key and required columns
-    KEY = "Clave computsa"
+    KEY = "Clave compuesta"
     required_cols = [
         KEY, "Shop Code", "Resource Name",
         "Duración SF", "Duración HCM", "Diferencia de hcm duración",
@@ -2049,5 +2049,6 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
