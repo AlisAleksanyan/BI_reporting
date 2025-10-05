@@ -707,7 +707,7 @@ def convert_saturation_to_excel(df, group_col, is_comparison=False):
                 worksheet.set_column(idx, idx, None)
     return output.getvalue()
     
-tab6, tab12, tab4, tab9, tab8= st.tabs(["Summary", "Saturation","HCM vs SF", "HRBP Tasks",  "CC"])
+tab6, tab12, tab4, tab9= st.tabs(["Summary", "Saturation","HCM vs SF", "HRBP Tasks"])
 
 with tab4:
     url1 = "www.linkedin.com/in/alisaaleksanyan"
@@ -2128,6 +2128,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
