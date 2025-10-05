@@ -1926,21 +1926,28 @@ with tab9:
         if missing:
             st.error(f"Missing expected columns in HCM: {missing}")
         else:
-            # Start with unique rows for the current view
+            # Filter only rows where Diferencia ≠ 0
             tasks_df = (
                 filtered_hcm[base_cols]
                 .copy()
                 .drop_duplicates(subset=["Shop Code", "Resource Name"])
+                .query("`Diferencia de hcm duración` != 0")
                 .reset_index(drop=True)
             )
 
+            # Rename columns to English
+            tasks_df.rename(columns={
+                "Duración SF": "SF Duration",
+                "Duración HCM": "HCM Duration",
+                "Diferencia de hcm duración": "HCM Duration Difference"
+            }, inplace=True)
+
             # --- Try to load prior saved tasks to persist Action/Details ---
-            tasks_path_in_repo = "output/Tasks.csv"   # <- final CSV path in repo
+            tasks_path_in_repo = "output/Tasks.csv"
             prior_bytes = _download_github_file(REPO_OWNER, REPO_NAME, tasks_path_in_repo, GITHUB_TOKEN)
             if prior_bytes is not None:
                 try:
                     prior_df = pd.read_csv(BytesIO(prior_bytes))
-                    # Safe merge on keys; keep any previously entered action/details.
                     if {"Shop Code","Resource Name"}.issubset(prior_df.columns):
                         prior_df = prior_df[["Shop Code", "Resource Name", "Action", "Details"]].copy()
                         tasks_df = tasks_df.merge(
@@ -1965,10 +1972,9 @@ with tab9:
             st.caption(":green[*Tip: update Action & Details per row, then click **Save changes** to commit to Git.*]")
 
             # ---- Build editable grid ----
-            action_choices = ["", "IT problem", "HR problem", "To be investigated", "No accion possible"]
+            action_choices = ["", "IT problem", "HR problem", "To be investigated", "No action possible"]
 
             gb_tasks = GridOptionsBuilder.from_dataframe(tasks_df)
-            # Make Action a dropdown
             gb_tasks.configure_column(
                 "Action",
                 header_name="Action",
@@ -1977,23 +1983,17 @@ with tab9:
                 cellEditorParams={"values": action_choices},
                 width=160
             )
-            # Details free text
             gb_tasks.configure_column(
                 "Details",
                 header_name="Details",
                 editable=True,
                 width=300
             )
-            # Make the HCM numbers nicely aligned/read-only
-            for c in ["Duración SF", "Duración HCM", "Diferencia de hcm duración"]:
+
+            for c in ["SF Duration", "HCM Duration", "HCM Duration Difference"]:
                 gb_tasks.configure_column(c, editable=False, type=["numericColumn"], cellClass="ag-right-aligned-cell")
 
-            gb_tasks.configure_grid_options(
-                domLayout='normal',
-                enableRangeSelection=True,
-                suppressRowClickSelection=True
-            )
-
+            gb_tasks.configure_grid_options(domLayout='normal', enableRangeSelection=True, suppressRowClickSelection=True)
             grid_options = gb_tasks.build()
 
             grid_response = AgGrid(
@@ -2010,32 +2010,17 @@ with tab9:
 
             edited_df = pd.DataFrame(grid_response["data"])
 
-            # Sanitize types a little
-            for num_col in ["Duración SF", "Duración HCM", "Diferencia de hcm duración"]:
-                if num_col in edited_df.columns:
-                    edited_df[num_col] = pd.to_numeric(edited_df[num_col], errors="coerce").fillna(0)
-
             # --- Save button: write CSV and commit to GitHub ---
             col_left, col_right = st.columns([1,4])
             with col_left:
                 if st.button("💾 Save changes", type="primary", use_container_width=True):
                     try:
-                        # Only keep columns we want in the CSV
-                        export_cols = ["Shop Code", "Resource Name", "Duración SF", "Duración HCM", "Diferencia de hcm duración", "Action", "Details"]
+                        export_cols = ["Shop Code", "Resource Name", "SF Duration", "HCM Duration", "HCM Duration Difference", "Action", "Details"]
                         to_export = edited_df[export_cols].copy()
-
-                        # Create CSV bytes
                         csv_bytes = to_export.to_csv(index=False).encode("utf-8")
-
-                        # Commit to GitHub (create/update)
                         commit_msg = f"chore(tasks): update Tasks CSV via app ({datetime.utcnow().isoformat()}Z)"
                         github_upsert_file(
-                            REPO_OWNER,
-                            REPO_NAME,
-                            tasks_path_in_repo,
-                            GITHUB_TOKEN,
-                            csv_bytes,
-                            commit_msg
+                            REPO_OWNER, REPO_NAME, tasks_path_in_repo, GITHUB_TOKEN, csv_bytes, commit_msg
                         )
                         st.success("Tasks saved and committed to GitHub ✅")
                     except Exception as e:
@@ -2043,12 +2028,11 @@ with tab9:
             with col_right:
                 st.download_button(
                     "⬇️ Download current table as CSV",
-                    edited_df[["Shop Code","Resource Name","Duración SF","Duración HCM","Diferencia de hcm duración","Action","Details"]].to_csv(index=False).encode("utf-8"),
+                    edited_df[export_cols].to_csv(index=False).encode("utf-8"),
                     file_name="Tasks.csv",
                     mime="text/csv",
                     use_container_width=True
                 )
-
 
 
 
