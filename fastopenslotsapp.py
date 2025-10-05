@@ -1908,6 +1908,31 @@ with tab6:
 
 with tab9:
     st.subheader("HRBP Tasks")
+    # ===== Tasks persistence (used in HRBP Tasks tab) =====
+    # Where to store the actions CSV in your repo
+    tasks_repo_path = "output/Tasks.csv"
+    
+    @st.cache_data(ttl=0, show_spinner=False)
+    def load_persisted_tasks():
+        """Load Tasks.csv from GitHub if it exists; otherwise return an empty, normalized DataFrame."""
+        raw = _download_github_file(REPO_OWNER, REPO_NAME, tasks_repo_path, GITHUB_TOKEN)
+        cols = ["Clave compuesta", "Shop Code", "Resource Name", "Action", "Details", "updated_at"]
+        if raw is None:
+            return pd.DataFrame(columns=cols)
+    
+        try:
+            df = pd.read_csv(BytesIO(raw))
+        except Exception:
+            # fallback delimiter if someone saved with ';'
+            df = pd.read_csv(BytesIO(raw), sep=";")
+    
+        # Normalize columns
+        for c in cols:
+            if c not in df.columns:
+                df[c] = "" if c != "updated_at" else pd.NaT
+        return df[cols]
+    
+    persisted_df = load_persisted_tasks()
 
     # --- Key and required columns
     KEY = "Clave compuesta"
@@ -2049,6 +2074,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
