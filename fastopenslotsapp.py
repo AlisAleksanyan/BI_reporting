@@ -1913,126 +1913,22 @@ with tab6:
             file_name="sf_vs_hcm_comparacion.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+# --- helper: create/update a file in GitHub (idempotent) ---
+def github_upsert_file(owner, repo, path, token, content_bytes, message):
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
 
-with tab9:
-    st.subheader("HRBP Tasks")
+    # Get current SHA if the file exists
+    r = requests.get(url, headers=headers, timeout=30)
+    sha = r.json().get("sha") if r.status_code == 200 else None
 
-    # --- Prepare base table from HCM (filtered by sidebar filters) ---
-    if filtered_hcm is None or filtered_hcm.empty:
-        st.info("No HCM data available for the selected filters.")
-    else:
-        base_cols = ["Shop Code", "Resource Name", "Duración SF", "Duración HCM", "Diferencia de hcm duración"]
-        missing = [c for c in base_cols if c not in filtered_hcm.columns]
-        if missing:
-            st.error(f"Missing expected columns in HCM: {missing}")
-        else:
-            # Filter only rows where Diferencia ≠ 0
-            tasks_df = (
-                filtered_hcm[base_cols]
-                .copy()
-                .drop_duplicates(subset=["Shop Code", "Resource Name"])
-                .query("`Diferencia de hcm duración` != 0")
-                .reset_index(drop=True)
-            )
+    payload = {
+        "message": message,
+        "content": base64.b64encode(content_bytes).decode("utf-8"),
+    }
+    if sha:
+        payload["sha"] = sha
 
-            # Rename columns to English
-            tasks_df.rename(columns={
-                "Duración SF": "SF Duration",
-                "Duración HCM": "HCM Duration",
-                "Diferencia de hcm duración": "HCM Duration Difference"
-            }, inplace=True)
-
-            # --- Try to load prior saved tasks to persist Action/Details ---
-            tasks_path_in_repo = "output/Tasks.csv"
-            prior_bytes = _download_github_file(REPO_OWNER, REPO_NAME, tasks_path_in_repo, GITHUB_TOKEN)
-            if prior_bytes is not None:
-                try:
-                    prior_df = pd.read_csv(BytesIO(prior_bytes))
-                    if {"Shop Code","Resource Name"}.issubset(prior_df.columns):
-                        prior_df = prior_df[["Shop Code", "Resource Name", "Action", "Details"]].copy()
-                        tasks_df = tasks_df.merge(
-                            prior_df,
-                            on=["Shop Code","Resource Name"],
-                            how="left",
-                            suffixes=("","_prior")
-                        )
-                    else:
-                        prior_df = None
-                except Exception:
-                    prior_df = None
-            else:
-                prior_df = None
-
-            # Ensure Action & Details columns exist
-            if "Action" not in tasks_df.columns:
-                tasks_df["Action"] = ""
-            if "Details" not in tasks_df.columns:
-                tasks_df["Details"] = ""
-
-            st.caption(":green[*Tip: update Action & Details per row, then click **Save changes** to commit to Git.*]")
-
-            # ---- Build editable grid ----
-            action_choices = ["", "IT problem", "HR problem", "To be investigated", "No action possible"]
-
-            gb_tasks = GridOptionsBuilder.from_dataframe(tasks_df)
-            gb_tasks.configure_column(
-                "Action",
-                header_name="Action",
-                editable=True,
-                cellEditor="agSelectCellEditor",
-                cellEditorParams={"values": action_choices},
-                width=160
-            )
-            gb_tasks.configure_column(
-                "Details",
-                header_name="Details",
-                editable=True,
-                width=300
-            )
-
-            for c in ["SF Duration", "HCM Duration", "HCM Duration Difference"]:
-                gb_tasks.configure_column(c, editable=False, type=["numericColumn"], cellClass="ag-right-aligned-cell")
-
-            gb_tasks.configure_grid_options(domLayout='normal', enableRangeSelection=True, suppressRowClickSelection=True)
-            grid_options = gb_tasks.build()
-
-            grid_response = AgGrid(
-                tasks_df,
-                gridOptions=grid_options,
-                enable_enterprise_modules=True,
-                allow_unsafe_jscode=True,
-                update_mode=GridUpdateMode.VALUE_CHANGED,
-                data_return_mode=DataReturnMode.AS_INPUT,
-                fit_columns_on_grid_load=True,
-                height=min(max(len(tasks_df) * 35, 300), 700),
-                theme='streamlit'
-            )
-
-            edited_df = pd.DataFrame(grid_response["data"])
-
-            # --- Save button: write CSV and commit to GitHub ---
-            col_left, col_right = st.columns([1,4])
-            with col_left:
-                if st.button("💾 Save changes", type="primary", use_container_width=True):
-                    try:
-                        export_cols = ["Shop Code", "Resource Name", "SF Duration", "HCM Duration", "HCM Duration Difference", "Action", "Details"]
-                        to_export = edited_df[export_cols].copy()
-                        csv_bytes = to_export.to_csv(index=False).encode("utf-8")
-                        commit_msg = f"chore(tasks): update Tasks CSV via app ({datetime.utcnow().isoformat()}Z)"
-                        github_upsert_file(
-                            REPO_OWNER, REPO_NAME, tasks_path_in_repo, GITHUB_TOKEN, csv_bytes, commit_msg
-                        )
-                        st.success("Tasks saved and committed to GitHub ✅")
-                    except Exception as e:
-                        st.error(f"Failed to save tasks: {e}")
-            with col_right:
-                st.download_button(
-                    "⬇️ Download current table as CSV",
-                    edited_df[export_cols].to_csv(index=False).encode("utf-8"),
-                    file_name="Tasks.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-
-
-
+    resp = requests.put(url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
