@@ -1909,89 +1909,91 @@ with tab6:
 with tab9:
     st.subheader("HRBP Tasks")
 
-    if filtered_hcm is None or filtered_hcm.empty:
-        st.info("No HCM data available for the selected filters.")
-        st.stop()
-
-    # 1) Build the live table from HCM mismatches (diff != 0) and rename headers to English
-    must_have = ["Shop Code", "Resource Name", "Duración SF", "Duración HCM", "Diferencia de hcm duración"]
-    missing = [c for c in must_have if c not in filtered_hcm.columns]
+    # --- Key and required columns
+    # KEY was already detected earlier from POSSIBLE_KEYS and persisted_df was loaded
+    required_cols = [
+        KEY, "Shop Code", "Resource Name",
+        "Duración SF", "Duración HCM", "Diferencia de hcm duración",
+        "iso_year", "iso_week"
+    ]
+    missing = [c for c in required_cols if c not in filtered_hcm.columns]
     if missing:
         st.error(f"Missing columns in HCM data: {missing}")
         st.stop()
 
+    # Ensure iso_year_week exists as 'YYYY_Www'
+    hcm_for_tasks = filtered_hcm.copy()
+    if "iso_year_week" not in hcm_for_tasks.columns:
+        # robust two-digit week formatting
+        iy = pd.to_numeric(hcm_for_tasks["iso_year"], errors="coerce").astype("Int64")
+        iw = pd.to_numeric(hcm_for_tasks["iso_week"], errors="coerce").astype("Int64")
+        hcm_for_tasks["iso_year_week"] = (
+            iy.astype(str) + "_" + iw.apply(lambda x: f"W{int(x):02d}" if pd.notna(x) else "W00")
+        )
+
+    # 1) Filter to the ISO week selected in the sidebar
+    # (iso_week_filter is already defined from the sidebar selectbox)
+    hcm_for_tasks = hcm_for_tasks[hcm_for_tasks["iso_week"] == int(iso_week_filter)]
+
+    # 2) Keep only rows where the difference is not 0
+    hcm_for_tasks = hcm_for_tasks[hcm_for_tasks["Diferencia de hcm duración"] != 0]
+
+    # 3) One live row per unique key (your key already encodes year+week)
     live_df = (
-        filtered_hcm[must_have]
-        .query("`Diferencia de hcm duración` != 0")
-        .rename(columns={
-            "Duración SF": "SF Duration",
-            "Duración HCM": "HCM Duration",
-            "Diferencia de hcm duración": "HCM Duration Difference",
-        })
+        hcm_for_tasks[[KEY, "Shop Code", "Resource Name",
+                       "Duración SF", "Duración HCM", "Diferencia de hcm duración",
+                       "iso_year_week"]]
+        .drop_duplicates(subset=[KEY], keep="last")
         .reset_index(drop=True)
     )
 
-    # 2) Load persisted Tasks.csv (source of truth for Action/Details) and left-merge
-    tasks_repo_path = "output/Tasks.csv"
-    persisted_bytes = _download_github_file(REPO_OWNER, REPO_NAME, tasks_repo_path, GITHUB_TOKEN)
-    if persisted_bytes is not None:
-        try:
-            persisted_df = pd.read_csv(BytesIO(persisted_bytes))
-        except Exception:
-            persisted_df = pd.DataFrame(columns=["Shop Code", "Resource Name", "Action", "Details"])
-    else:
-        persisted_df = pd.DataFrame(columns=["Shop Code", "Resource Name", "Action", "Details"])
+    # Rename to English for display
+    live_df = live_df.rename(columns={
+        "Duración SF": "SF Duration",
+        "Duración HCM": "HCM Duration",
+        "Diferencia de hcm duración": "HCM Duration Difference"
+    })
 
-    if not {"Shop Code","Resource Name","Action","Details"}.issubset(persisted_df.columns):
-        # normalize columns in case the CSV was manually edited
-        for col in ["Shop Code","Resource Name","Action","Details"]:
-            if col not in persisted_df.columns:
-                persisted_df[col] = ""
-        persisted_df = persisted_df[["Shop Code","Resource Name","Action","Details"]]
-
-    # Merge persisted actions into the current mismatches view
-    table_df = live_df.merge(
-        persisted_df[["Shop Code","Resource Name","Action","Details"]],
-        on=["Shop Code","Resource Name"],
-        how="left"
-    )
-
-    # Set defaults for editables
+    # Merge with persisted actions by key
+    table_df = live_df.merge(persisted_df, on=KEY, how="left")
     table_df["Action"]  = table_df["Action"].fillna("")
     table_df["Details"] = table_df["Details"].fillna("")
+    table_df = table_df.drop_duplicates(subset=[KEY], keep="first").reset_index(drop=True)
 
-    st.caption(":green[*Edit **Action** and **Details** below. Click **Save changes** to commit to Git; everyone will immediately see the updates.*]")
+    # Final display order (include iso_year_week)
+    display_cols = [
+        KEY, "iso_year_week", "Shop Code", "Resource Name",
+        "SF Duration", "HCM Duration", "HCM Duration Difference",
+        "Action", "Details"
+    ]
+    table_df = table_df[display_cols]
 
-    # 3) Editable grid
-    action_choices = ["", "IT problem", "HR problem", "To be investigated", "No action possible"]
-
-    gb = GridOptionsBuilder.from_dataframe(table_df)
-    # Lock numeric/metric columns
-    for c in ["SF Duration", "HCM Duration", "HCM Duration Difference"]:
-        gb.configure_column(c, editable=False, type=["numericColumn"], cellClass="ag-right-aligned-cell")
-    gb.configure_column(
-        "Action",
-        editable=True,
-        cellEditor="agSelectCellEditor",
-        cellEditorParams={"values": action_choices},
-        width=180,
+    st.caption(
+        f"Showing ISO week **{iso_week_filter}**. Edit Action/Details per row. Click **Save** to persist to Git."
     )
-    gb.configure_column("Details", editable=True, width=380)
-    gb.configure_grid_options(domLayout='normal', enableRangeSelection=True, suppressRowClickSelection=True)
-    grid_opts = gb.build()
 
-    grid = AgGrid(
+    # --- AgGrid with editable Action dropdown + Details free text (unchanged) ---
+    gb = GridOptionsBuilder.from_dataframe(table_df)
+    gb.configure_default_column(editable=False, resizable=True)
+    gb.configure_column("Action", editable=True, cellEditor="agSelectCellEditor",
+                        cellEditorParams={"values": ["", "IT problem", "HR problem", "To be investigated", "No action possible"]})
+    gb.configure_column("Details", editable=True)
+    gb.configure_grid_options(rowSelection="single", animateRows=True)
+    grid_options = gb.build()
+
+    grid_resp = AgGrid(
         table_df,
-        gridOptions=grid_opts,
+        gridOptions=grid_options,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
         enable_enterprise_modules=True,
         allow_unsafe_jscode=True,
-        update_mode=GridUpdateMode.VALUE_CHANGED,
-        data_return_mode=DataReturnMode.AS_INPUT,
-        fit_columns_on_grid_load=True,
-        height=min(max(len(table_df) * 36, 320), 720),
         theme="streamlit",
+        height=min(600, 60 + 28*max(5, len(table_df))),
+        fit_columns_on_grid_load=True,
     )
-    edited_df = pd.DataFrame(grid["data"])
+    edited_df = grid_resp["data"].copy()
+
 
     export_cols = [
         "Shop Code",
@@ -2047,3 +2049,4 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
