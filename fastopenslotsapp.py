@@ -1769,32 +1769,21 @@ with tab6:
     # ===== Tasks: summary (place this right before the "SF vs HCM Comparison" subheader) =====
     st.subheader("Tasks: summary", divider="gray")
 
-    # Build the mismatch set for the selected ISO week (already filtered in filtered_hcm)
+
+    # Filter mismatches for selected ISO week
     mismatch = filtered_hcm.copy()
     mismatch = mismatch[mismatch["iso_week"] == int(iso_week_filter)]
     mismatch = mismatch[mismatch["Diferencia de hcm duración"] != 0].copy()
     mismatch["Region"] = mismatch["Region"].fillna("Unknown")
     
-    # --- Bar chart: # of mismatches per Region ---
+    # --- Bar chart: Tareas vs. Gestionado por Región ---
     by_region = (
         mismatch.groupby("Region", dropna=False)
         .size()
-        .reset_index(name="Count")
-        .sort_values("Count", ascending=False)
+        .reset_index(name="Total Tareas Agenda")
     )
-    fig_bar = px.bar(
-        by_region,
-        x="Region",
-        y="Count",
-        text="Count",
-        title="Tareas con diferencia HCM vs SF por Región",
-    )
-    fig_bar.update_traces(textposition="outside")
-    fig_bar.update_layout(yaxis_title="Count", xaxis_title="Region")
-    # -------
     
-    # --- Action distribution (donut) ---
-    # Load persisted actions directly from GitHub, then join to current mismatches by key
+    # Load actions and merge by key
     def _load_persisted_actions():
         raw = _download_github_file(REPO_OWNER, REPO_NAME, "output/Tasks.csv", GITHUB_TOKEN)
         if raw is None:
@@ -1803,56 +1792,80 @@ with tab6:
             df = pd.read_csv(BytesIO(raw))
         except Exception:
             df = pd.read_csv(BytesIO(raw), sep=";")
-        for col in ["Clave compuesta", "Action"]:
-            if col not in df.columns:
-                df[col] = ""
-        return df[["Clave compuesta", "Action"]]
+        return df
     
     actions_df = _load_persisted_actions()
-    
-    # Keep only keys in scope (this week & mismatching)
-    need_cols = ["Clave compuesta"]
-    if "Clave compuesta" not in mismatch.columns:
-        # If key is missing, just show empty pie safely
-        merged_actions = pd.DataFrame(columns=["Category", "count"])
+    if "Clave compuesta" in mismatch.columns and not actions_df.empty:
+        merged = mismatch.merge(actions_df, on="Clave compuesta", how="left")
+        managed = merged.groupby("Region")["Action"].apply(lambda x: x.notna().sum()).reset_index(name="Gestionado")
+        fixed = merged.groupby("Region")["Action"].apply(lambda x: (x == "Fixed").sum()).reset_index(name="Fixed")
+        by_region = by_region.merge(managed, on="Region", how="left").merge(fixed, on="Region", how="left")
     else:
-        tmp = mismatch[need_cols].drop_duplicates()
-        merged = tmp.merge(actions_df, on="Clave compuesta", how="left")
+        by_region["Gestionado"] = 0
+        by_region["Fixed"] = 0
     
-        # Map to Spanish display labels similar to your example
-        label_map = {
+    by_region = by_region.fillna(0)
+    
+    fig_bar = px.bar(
+        by_region.melt(id_vars="Region", var_name="Tipo", value_name="Count"),
+        x="Region",
+        y="Count",
+        color="Tipo",
+        barmode="group",
+        text="Count",
+        color_discrete_map={
+            "Total Tareas Agenda": "#cc0641",
+            "Gestionado": "#f1b84b",
+            "Fixed": "#5570ff"
+        },
+        title="Tareas vs. Gestionado por Región (HCM SF Diferencia)"
+    )
+    fig_bar.update_traces(textposition="outside")
+    fig_bar.update_layout(yaxis_title="Count", xaxis_title="Region")
+    
+    # --- Donut chart: Distribución por acción ---
+    if "Clave compuesta" in mismatch.columns and not actions_df.empty:
+        merged["Category"] = merged["Action"].map({
             "No action possible": "No acción posible",
             "HR problem": "Ticket HR",
             "IT problem": "Ticket IT",
             "To be investigated": "Ticket Soporte",
-            "": "Sin acción",
-            None: "Sin acción",
-        }
-        merged["Category"] = merged["Action"].map(label_map).fillna("Otros")
+            "Fixed": "Solucionado"
+        }).fillna("Sin acción")
         merged_actions = (
             merged.groupby("Category")
             .size()
             .reset_index(name="count")
             .sort_values("count", ascending=False)
         )
+    else:
+        merged_actions = pd.DataFrame(columns=["Category", "count"])
     
     fig_pie = px.pie(
         merged_actions,
         names="Category",
         values="count",
         hole=0.5,
-        title="Distribución para HCM vs SF (Acciones)",
+        title="Distribución para HCM SF Diferencia",
+        color="Category",
+        color_discrete_map={
+            "No acción posible": "#5570ff",
+            "Ticket Soporte": "#f1b84b",
+            "Ticket HR": "#cc0641",
+            "Solucionado": "#b5a642",
+            "Ticket IT": "#f86b52"
+        }
     )
     
-    # --- Lay them out side by side ---
+    # --- Layout side-by-side ---
     c1, c2 = st.columns([1.25, 1])
     with c1:
         st.plotly_chart(fig_bar, use_container_width=True)
     with c2:
         st.plotly_chart(fig_pie, use_container_width=True)
-    # ===== end Tasks: summary =====
 
-    st.subheader("SF vs HCM Comparison", divider="gray")
+
+st.subheader("SF vs HCM Comparison", divider="gray")
 
 
     # Warning messages for empty data
@@ -2213,6 +2226,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
