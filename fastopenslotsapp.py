@@ -1,4 +1,3 @@
-# ---- LOCAL-ONLY STREAMLIT APP (no GitHub/API) ----
 import os, io, json, base64, calendar, requests
 from io import BytesIO
 from urllib.parse import quote
@@ -188,10 +187,10 @@ with st.spinner("⬇️ Loading agenda data from GitHub..."):
         st.error("FATAL: No valid agenda data could be loaded from GitHub.")
         st.stop()
 
-    # nice "last updated" in Europe/Madrid
+    # nice "last updated" in Europe/Madrid (no file path)
     if commit_dt_utc:
         madrid = pytz.timezone("Europe/Madrid")
-        st.write("Last updated:", commit_dt_utc.astimezone(madrid).strftime("%Y-%m-%d %H:%M:%S"), " — ", used_repo_path)
+        st.write("Last updated:", commit_dt_utc.astimezone(madrid).strftime("%Y-%m-%d %H:%M:%S"))
 
     # Load “yesterday” fallback (if not already used)
     shift_slots_yesterday, _, _ = load_best_effort_github(
@@ -1878,6 +1877,7 @@ with tab6:
             file_name="sf_vs_hcm_comparacion.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 
 
 
