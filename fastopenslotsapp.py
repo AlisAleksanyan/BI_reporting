@@ -192,6 +192,7 @@ st.markdown(
     It consolidates key performance data, highlights inconsistencies between internal systems, 
     and includes an input feature to track issue resolution and improvement actions over time- 
     helping teams strengthen data reliability and streamline daily operations.
+    (This is a functional prototype to demonstrate the concept for portfolio purposes.)
     </p>
     """,
     unsafe_allow_html=True
@@ -2036,7 +2037,10 @@ with tab9:
     # ===== Tasks persistence (used in HRBP Tasks tab) =====
     # Where to store the actions CSV in your repo
     tasks_repo_path = "output/Tasks.csv"
-    
+    st.markdown(f'''
+        :green[*Goal: This section helps track and manage data discrepancies between systems, assign actions, and monitor progress on issue resolution to ensure consistent and reliable workforce data.*]
+        ''')
+
     @st.cache_data(ttl=0, show_spinner=False)
     def load_persisted_tasks():
         """Load Tasks.csv from GitHub if it exists; otherwise return an empty, normalized DataFrame."""
@@ -2253,6 +2257,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
