@@ -1980,11 +1980,16 @@ with tab9:
     })
 
     # Merge with persisted actions by key
-    table_df = live_df.merge(persisted_df, on=KEY, how="left")
+    persist_cols = [KEY, "Action", "Details"]
+    for c in persist_cols:
+        if c not in persisted_df.columns:
+            persisted_df[c] = ""  # normalize shape if file is empty/new
+    
+    table_df = live_df.merge(persisted_df[persist_cols], on=KEY, how="left")
     table_df["Action"]  = table_df["Action"].fillna("")
     table_df["Details"] = table_df["Details"].fillna("")
     table_df = table_df.drop_duplicates(subset=[KEY], keep="first").reset_index(drop=True)
-
+    
     # Final display order (include iso_year_week)
     display_cols = [
         KEY, "iso_year_week", "Shop Code", "Resource Name",
@@ -1992,6 +1997,7 @@ with tab9:
         "Action", "Details"
     ]
     table_df = table_df[display_cols]
+
 
     st.caption(
         f"Showing ISO week **{iso_week_filter}**. Edit Action/Details per row. Click **Save** to persist to Git."
@@ -2036,21 +2042,19 @@ with tab9:
             try:
                 # 4) Persist: merge back into the *persisted* source-of-truth and commit
                 #    - Keep any actions for pairs not currently mismatching (so history isn't lost)
-                latest_actions = edited_df[["Shop Code","Resource Name","Action","Details"]].copy()
+                latest_actions = edited_df[[KEY, "Action", "Details"]].copy()
 
                 # Deduplicate keys (last edit wins)
-                latest_actions = latest_actions.drop_duplicates(subset=["Shop Code","Resource Name"], keep="last")
+                latest_actions = latest_actions.drop_duplicates(subset=[KEY], keep="last")
 
                 # Update/insert into persisted_df by key
-                base = persisted_df.copy()
+                base = persisted_df[persist_cols].copy()
                 if base.empty:
                     merged_persisted = latest_actions
                 else:
-                    # remove any keys being updated, then append latest
-                    idx = pd.MultiIndex.from_frame(base[["Shop Code","Resource Name"]])
-                    upd_idx = pd.MultiIndex.from_frame(latest_actions[["Shop Code","Resource Name"]])
-                    keep_mask = ~idx.isin(upd_idx)
+                    keep_mask = ~base[KEY].isin(latest_actions[KEY])
                     merged_persisted = pd.concat([base.loc[keep_mask], latest_actions], ignore_index=True)
+                
 
                 # Commit to GitHub
                 csv_bytes = merged_persisted.to_csv(index=False).encode("utf-8")
@@ -2074,6 +2078,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
