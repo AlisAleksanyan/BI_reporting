@@ -185,7 +185,17 @@ st.markdown(
     unsafe_allow_html=True
 )
 st.markdown('<h1 class="custom-title">AGENDA APP</h1>', unsafe_allow_html=True)
-
+st.markdown(
+    """
+    <p style="text-align:center; margin-top:-10px; margin-bottom:16px; color:#555;">
+    This app was designed as a reporting and monitoring tool to support operational excellence. 
+    It consolidates key performance data, highlights inconsistencies between internal systems, 
+    and includes an input feature to track issue resolution and improvement actions over time- 
+    helping teams strengthen data reliability and streamline daily operations.
+    </p>
+    """,
+    unsafe_allow_html=True
+)
 # ---------- Dates / Paths ----------
 # ---------- Dates / Paths (unchanged date logic) ----------
 folder_path_in_repo = "shiftslots"  # this is the repo folder
@@ -2243,6 +2253,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
