@@ -1769,18 +1769,17 @@ with tab6:
     # ===== Tasks: summary (place this right before the "SF vs HCM Comparison" subheader) =====
     st.subheader("Tasks: summary", divider="gray")
 
-
     # Filter mismatches for selected ISO week
     mismatch = filtered_hcm.copy()
     mismatch = mismatch[mismatch["iso_week"] == int(iso_week_filter)]
     mismatch = mismatch[mismatch["Diferencia de hcm duración"] != 0].copy()
     mismatch["Region"] = mismatch["Region"].fillna("Unknown")
     
-    # --- Bar chart: Tareas vs. Gestionado por Región ---
+    # --- Bar chart: Tasks vs Managed per Region ---
     by_region = (
         mismatch.groupby("Region", dropna=False)
         .size()
-        .reset_index(name="Total Tareas Agenda")
+        .reset_index(name="Total Tasks")
     )
     
     # Load actions and merge by key
@@ -1797,67 +1796,69 @@ with tab6:
     actions_df = _load_persisted_actions()
     if "Clave compuesta" in mismatch.columns and not actions_df.empty:
         merged = mismatch.merge(actions_df, on="Clave compuesta", how="left")
-        managed = merged.groupby("Region")["Action"].apply(lambda x: x.notna().sum()).reset_index(name="Gestionado")
-        fixed = merged.groupby("Region")["Action"].apply(lambda x: (x == "Fixed").sum()).reset_index(name="Fixed")
+        managed = merged.groupby("Region")["Action"].apply(lambda x: x.astype(str).str.strip().ne("").sum()).reset_index(name="Managed")
+        fixed = merged.groupby("Region")["Action"] \
+            .apply(lambda x: x.isin(["Solved"]).sum()) \
+            .reset_index(name="Fixed")
         by_region = by_region.merge(managed, on="Region", how="left").merge(fixed, on="Region", how="left")
     else:
-        by_region["Gestionado"] = 0
+        by_region["Managed"] = 0
         by_region["Fixed"] = 0
     
     by_region = by_region.fillna(0)
     
     fig_bar = px.bar(
-        by_region.melt(id_vars="Region", var_name="Tipo", value_name="Count"),
+        by_region.melt(id_vars="Region", var_name="Type", value_name="Count"),
         x="Region",
         y="Count",
-        color="Tipo",
+        color="Type",
         barmode="group",
         text="Count",
         color_discrete_map={
-            "Total Tareas Agenda": "#cc0641",
-            "Gestionado": "#f1b84b",
-            "Fixed": "#5570ff"
+            "No action possible": "#5570ff",
+            "Support Ticket": "#f1b84b",
+            "HR Ticket": "#cc0641",
+            "Solved": "#b5a642",
+            "IT Ticket": "#f86b52",
+            "No action": "#cccccc"
         },
-        title="Tareas vs. Gestionado por Región (HCM SF Diferencia)"
+        title="Tasks vs Managed per Region (HCM-SF Difference)"
     )
     fig_bar.update_traces(textposition="outside")
     fig_bar.update_layout(yaxis_title="Count", xaxis_title="Region")
     
-    # --- Donut chart: Distribución por acción ---
+    # --- Donut chart: Action Distribution ---
     if "Clave compuesta" in mismatch.columns and not actions_df.empty:
-        merged["Category"] = merged["Action"].map({
-            "No action possible": "No acción posible",
-            "HR problem": "Ticket HR",
-            "IT problem": "Ticket IT",
-            "To be investigated": "Ticket Soporte",
-            "Fixed": "Solucionado"
-        }).fillna("Sin acción")
+        allowed = ["No action possible", "Support Ticket", "HR Ticket", "IT Ticket", "Solved"]
         merged_actions = (
-            merged.groupby("Category")
-            .size()
-            .reset_index(name="count")
-            .sort_values("count", ascending=False)
+            merged.loc[merged["Action"].isin(allowed)]
+                  .groupby("Action")
+                  .size()
+                  .reset_index(name="count")
+                  .sort_values("count", ascending=False)
         )
+
+
     else:
         merged_actions = pd.DataFrame(columns=["Category", "count"])
     
     fig_pie = px.pie(
         merged_actions,
-        names="Category",
+        names="Action",
         values="count",
         hole=0.5,
-        title="Distribución para HCM SF Diferencia",
+        title="Action Distribution (HCM-SF Difference)",
         color="Category",
         color_discrete_map={
-            "No acción posible": "#5570ff",
-            "Ticket Soporte": "#f1b84b",
-            "Ticket HR": "#cc0641",
-            "Solucionado": "#b5a642",
-            "Ticket IT": "#f86b52"
+            "No action possible": "#5570ff",  # blue
+            "Support Ticket": "#f1b84b",      # amber
+            "HR Ticket": "#cc0641",           # red
+            "Solved": "#b5a642",              # olive-gold
+            "IT Ticket": "#f86b52"            # orange-red
         }
     )
     
-    # --- Layout side-by-side ---
+    # --- Layout side by side ---
     c1, c2 = st.columns([1.25, 1])
     with c1:
         st.plotly_chart(fig_bar, use_container_width=True)
@@ -2113,7 +2114,7 @@ with tab9:
         "Action",
         editable=True,
         cellEditor="agSelectCellEditor",
-        cellEditorParams={"values": ["", "IT problem", "HR problem", "To be investigated", "No action possible"]}
+        cellEditorParams={"values": ["", "No action possible", "Support Ticket", "HR Ticket", "IT Ticket", "Solved"]}
     )
     gb.configure_column("Details", editable=True)
     
@@ -2226,6 +2227,7 @@ with tab9:
             mime="text/csv",
             use_container_width=True,
         )
+
 
 
 
