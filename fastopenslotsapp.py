@@ -138,6 +138,42 @@ def load_best_effort_github(paths_in_repo: list[str], *, repo_owner: str, repo_n
         if df is not None and not df.empty:
             return df, p, commit_dt
     return None, None, None
+
+# ---- GitHub upsert helpers (create or update a file on repo) ----
+def _get_file_sha_if_exists(repo_owner: str, repo_name: str, path_in_repo: str, token: str) -> str | None:
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{path_in_repo}"
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
+    r = requests.get(url, headers=headers, timeout=30)
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.json().get("sha")
+
+def github_upsert_file(repo_owner: str, repo_name: str, path_in_repo: str, token: str, content_bytes: bytes, commit_message: str, branch: str | None = None):
+    """
+    Creates or updates a file at path_in_repo with content_bytes.
+    If file exists, includes its SHA so GitHub treats it as an update.
+    """
+    b64 = base64.b64encode(content_bytes).decode('utf-8')
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{path_in_repo}"
+    headers = {'Authorization': f'token {token}', 'Accept': 'application/vnd.github.v3+json'}
+
+    payload = {
+        "message": commit_message,
+        "content": b64,
+    }
+    if branch:
+        payload["branch"] = branch
+
+    sha = _get_file_sha_if_exists(repo_owner, repo_name, path_in_repo, token)
+    if sha:
+        payload["sha"] = sha  # required when updating an existing file
+
+    r = requests.put(url, headers=headers, data=json.dumps(payload), timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
 # ---------- UI Styles ----------
 st.markdown(
     """
@@ -1877,6 +1913,141 @@ with tab6:
             file_name="sf_vs_hcm_comparacion.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+with tab9:
+    st.subheader("HRBP Tasks")
+
+    # --- Prepare base table from HCM (filtered by sidebar filters) ---
+    if filtered_hcm is None or filtered_hcm.empty:
+        st.info("No HCM data available for the selected filters.")
+    else:
+        base_cols = ["Shop Code", "Resource Name", "Duración SF", "Duración HCM", "Diferencia de hcm duración"]
+        missing = [c for c in base_cols if c not in filtered_hcm.columns]
+        if missing:
+            st.error(f"Missing expected columns in HCM: {missing}")
+        else:
+            # Start with unique rows for the current view
+            tasks_df = (
+                filtered_hcm[base_cols]
+                .copy()
+                .drop_duplicates(subset=["Shop Code", "Resource Name"])
+                .reset_index(drop=True)
+            )
+
+            # --- Try to load prior saved tasks to persist Action/Details ---
+            tasks_path_in_repo = "output/Tasks.csv"   # <- final CSV path in repo
+            prior_bytes = _download_github_file(REPO_OWNER, REPO_NAME, tasks_path_in_repo, GITHUB_TOKEN)
+            if prior_bytes is not None:
+                try:
+                    prior_df = pd.read_csv(BytesIO(prior_bytes))
+                    # Safe merge on keys; keep any previously entered action/details.
+                    if {"Shop Code","Resource Name"}.issubset(prior_df.columns):
+                        prior_df = prior_df[["Shop Code", "Resource Name", "Action", "Details"]].copy()
+                        tasks_df = tasks_df.merge(
+                            prior_df,
+                            on=["Shop Code","Resource Name"],
+                            how="left",
+                            suffixes=("","_prior")
+                        )
+                    else:
+                        prior_df = None
+                except Exception:
+                    prior_df = None
+            else:
+                prior_df = None
+
+            # Ensure Action & Details columns exist
+            if "Action" not in tasks_df.columns:
+                tasks_df["Action"] = ""
+            if "Details" not in tasks_df.columns:
+                tasks_df["Details"] = ""
+
+            st.caption(":green[*Tip: update Action & Details per row, then click **Save changes** to commit to Git.*]")
+
+            # ---- Build editable grid ----
+            action_choices = ["", "IT problem", "HR problem", "To be investigated", "No accion possible"]
+
+            gb_tasks = GridOptionsBuilder.from_dataframe(tasks_df)
+            # Make Action a dropdown
+            gb_tasks.configure_column(
+                "Action",
+                header_name="Action",
+                editable=True,
+                cellEditor="agSelectCellEditor",
+                cellEditorParams={"values": action_choices},
+                width=160
+            )
+            # Details free text
+            gb_tasks.configure_column(
+                "Details",
+                header_name="Details",
+                editable=True,
+                width=300
+            )
+            # Make the HCM numbers nicely aligned/read-only
+            for c in ["Duración SF", "Duración HCM", "Diferencia de hcm duración"]:
+                gb_tasks.configure_column(c, editable=False, type=["numericColumn"], cellClass="ag-right-aligned-cell")
+
+            gb_tasks.configure_grid_options(
+                domLayout='normal',
+                enableRangeSelection=True,
+                suppressRowClickSelection=True
+            )
+
+            grid_options = gb_tasks.build()
+
+            grid_response = AgGrid(
+                tasks_df,
+                gridOptions=grid_options,
+                enable_enterprise_modules=True,
+                allow_unsafe_jscode=True,
+                update_mode=GridUpdateMode.VALUE_CHANGED,
+                data_return_mode=DataReturnMode.AS_INPUT,
+                fit_columns_on_grid_load=True,
+                height=min(max(len(tasks_df) * 35, 300), 700),
+                theme='streamlit'
+            )
+
+            edited_df = pd.DataFrame(grid_response["data"])
+
+            # Sanitize types a little
+            for num_col in ["Duración SF", "Duración HCM", "Diferencia de hcm duración"]:
+                if num_col in edited_df.columns:
+                    edited_df[num_col] = pd.to_numeric(edited_df[num_col], errors="coerce").fillna(0)
+
+            # --- Save button: write CSV and commit to GitHub ---
+            col_left, col_right = st.columns([1,4])
+            with col_left:
+                if st.button("💾 Save changes", type="primary", use_container_width=True):
+                    try:
+                        # Only keep columns we want in the CSV
+                        export_cols = ["Shop Code", "Resource Name", "Duración SF", "Duración HCM", "Diferencia de hcm duración", "Action", "Details"]
+                        to_export = edited_df[export_cols].copy()
+
+                        # Create CSV bytes
+                        csv_bytes = to_export.to_csv(index=False).encode("utf-8")
+
+                        # Commit to GitHub (create/update)
+                        commit_msg = f"chore(tasks): update Tasks CSV via app ({datetime.utcnow().isoformat()}Z)"
+                        github_upsert_file(
+                            REPO_OWNER,
+                            REPO_NAME,
+                            tasks_path_in_repo,
+                            GITHUB_TOKEN,
+                            csv_bytes,
+                            commit_msg
+                        )
+                        st.success("Tasks saved and committed to GitHub ✅")
+                    except Exception as e:
+                        st.error(f"Failed to save tasks: {e}")
+            with col_right:
+                st.download_button(
+                    "⬇️ Download current table as CSV",
+                    edited_df[["Shop Code","Resource Name","Duración SF","Duración HCM","Diferencia de hcm duración","Action","Details"]].to_csv(index=False).encode("utf-8"),
+                    file_name="Tasks.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
 
 
 
