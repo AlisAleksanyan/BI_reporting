@@ -4,6 +4,7 @@ A Streamlit web application for managing and analyzing retail agenda data.
 This demo uses fake sample data, but the original project was built with real company data.
 It includes the full data processing pipeline: from raw extraction, cleaning, and transformation to creating readable reports and dashboards.
 
+Please visit the following link to view the app: https://agendareport.streamlit.app/
 ### Features
 
 Automated ETL pipeline: raw data → cleaned & structured datasets (via GitHub Actions)
