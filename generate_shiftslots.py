@@ -189,7 +189,10 @@ def extend_to_full_window(template_df: pd.DataFrame, snapshot_dt: datetime, tz_s
     attrs = base_rows[ID_COLS].drop_duplicates("GT_ShopCode__c")
     full = bd_df.merge(attrs, on="GT_ShopCode__c", how="left")
 
-    # Bring numeric columns from template when exact day exists
+    # Bring numeric columns from the template when an exact day exists.
+    # Generated snapshots can be for a different year than the template, so an
+    # exact-date merge alone is not sufficient. Build shop/weekday baselines as
+    # a fallback to preserve each shop's normal weekly operating pattern.
     numeric_cols_in_template = [c for c in HOUR_COLS if c in df.columns]
     df_num = df[["GT_ShopCode__c","date"] + numeric_cols_in_template].copy()
     # Bring appointments if present
@@ -201,6 +204,46 @@ def extend_to_full_window(template_df: pd.DataFrame, snapshot_dt: datetime, tz_s
     for c in HOUR_COLS + ["[Agenda_Appointments]"]:
         if c not in full.columns:
             full[c] = np.nan
+
+    metric_cols = HOUR_COLS + ["[Agenda_Appointments]"]
+    for c in metric_cols:
+        if c not in df.columns:
+            df[c] = np.nan
+    df["weekday_key"] = pd.to_datetime(df["date"]).dt.dayofweek
+    full["weekday_key"] = pd.to_datetime(full["date"]).dt.dayofweek
+
+    weekday_baselines = (
+        df.groupby(["GT_ShopCode__c", "weekday_key"], as_index=False)[metric_cols]
+          .mean(numeric_only=True)
+          .rename(columns={c: f"{c}__weekday" for c in metric_cols})
+    )
+    full = full.merge(
+        weekday_baselines,
+        on=["GT_ShopCode__c", "weekday_key"],
+        how="left",
+    )
+
+    shop_baselines = (
+        df.groupby("GT_ShopCode__c", as_index=False)[metric_cols]
+          .mean(numeric_only=True)
+          .rename(columns={c: f"{c}__shop" for c in metric_cols})
+    )
+    full = full.merge(shop_baselines, on="GT_ShopCode__c", how="left")
+
+    global_baselines = df[metric_cols].mean(numeric_only=True)
+    for c in metric_cols:
+        full[c] = (
+            pd.to_numeric(full[c], errors="coerce")
+              .fillna(full[f"{c}__weekday"])
+              .fillna(full[f"{c}__shop"])
+              .fillna(global_baselines.get(c, 0.0))
+        )
+
+    fallback_cols = [
+        col for col in full.columns
+        if col.endswith("__weekday") or col.endswith("__shop")
+    ]
+    full.drop(columns=fallback_cols + ["weekday_key"], inplace=True)
 
     # Sort and forward/backward fill per shop (avoid index-alignment issues)
     full.sort_values(["GT_ShopCode__c","date"], inplace=True)
