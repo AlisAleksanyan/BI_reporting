@@ -142,6 +142,8 @@ HOUR_COLS = [
     "PersonalBlockHours","BusinessBlockHours","AdminBlockHours","WeBlockHours","OtherBlockHours"
 ]
 
+CORE_ACTIVITY_COLS = ["OpenHours", "TotalHours", "BookedHours"]
+
 OPTIONAL_APP_COLS = [
     # slots/shift columns the Streamlit app touches
     "30min_slots","60min_slots",
@@ -164,6 +166,13 @@ def extend_to_full_window(template_df: pd.DataFrame, snapshot_dt: datetime, tz_s
     if "date" not in df.columns:
         raise ValueError("Template must contain a 'date' column with daily rows.")
     df["date"] = pd.to_datetime(df["date"]).dt.date
+
+    missing_activity = [c for c in CORE_ACTIVITY_COLS if c not in df.columns]
+    if missing_activity:
+        raise ValueError(f"Template is missing required activity columns: {missing_activity}")
+    template_activity = df[CORE_ACTIVITY_COLS].apply(pd.to_numeric, errors="coerce").fillna(0)
+    if not template_activity.to_numpy().any():
+        raise ValueError("Template contains no non-zero agenda activity; refusing to generate an empty snapshot.")
 
     # Window boundaries
     start_d, end_d = planning_window_for(snap)
@@ -324,6 +333,12 @@ def extend_to_full_window(template_df: pd.DataFrame, snapshot_dt: datetime, tz_s
 
     # Row-level daily percentage columns (0..100 scale) that the app expects
     full = compute_daily_percentages(full)
+
+    generated_activity = full[CORE_ACTIVITY_COLS].apply(pd.to_numeric, errors="coerce").fillna(0)
+    if not generated_activity.to_numpy().any():
+        raise ValueError(
+            "Generated snapshot contains no agenda activity. Check template dates and baseline mapping."
+        )
 
     # Make sure optional columns exist (flags/sales/appointments recent history)
     for c in OPTIONAL_APP_COLS:

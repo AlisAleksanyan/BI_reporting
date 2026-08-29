@@ -260,14 +260,25 @@ if 'date_dt' not in shift_slots.columns and 'date' in shift_slots.columns:
     shift_slots = shift_slots.copy()
     shift_slots['date_dt'] = pd.to_datetime(shift_slots['date'], errors='coerce')
 
-available_weeks = sorted(shift_slots['iso_week'].dropna().unique().tolist()) if 'iso_week' in shift_slots.columns else []
+agenda_weeks = set(
+    pd.to_numeric(shift_slots['iso_week'], errors='coerce').dropna().astype(int).tolist()
+) if 'iso_week' in shift_slots.columns else set()
+hcm_weeks = set(
+    pd.to_numeric(hcm['iso_week'], errors='coerce').dropna().astype(int).tolist()
+) if hcm is not None and not hcm.empty and 'iso_week' in hcm.columns else set()
+
+# The global week selector drives both agenda and HCM views. Only offer weeks
+# backed by both source files; otherwise one of the first tabs appears empty.
+available_weeks = sorted(agenda_weeks & hcm_weeks) if hcm_weeks else sorted(agenda_weeks)
+if not available_weeks:
+    st.error("No ISO weeks are shared by the agenda and HCM source files.")
+    st.stop()
 current_week_index = available_weeks.index(current_iso_week) if current_iso_week in available_weeks else 0
 iso_week_filter = st.sidebar.selectbox('Seleccione la Semana ISO:', available_weeks, index=current_week_index if available_weeks else 0)
 # Calculate the previous ISO week and year based on the selected ISO week
-selected_iso_year = datetime.now().year  # Assuming current year, adjust if you have a different dataset
-previous_iso_week = iso_week_filter - 1
-previous_iso_year = selected_iso_year if previous_iso_week == 0 else selected_iso_year - 1
-previous_iso_week = 52 if (pd.Timestamp(f"{previous_iso_year}-12-28").isocalendar()[1] == 52) else 53
+selected_iso_year = current_iso_year
+previous_week_date = datetime.fromisocalendar(selected_iso_year, int(iso_week_filter), 1) - timedelta(weeks=1)
+previous_iso_year, previous_iso_week, _ = previous_week_date.isocalendar()
 
 region_list = sorted(shift_slots['Region'].dropna().unique().tolist()) if 'Region' in shift_slots.columns else []
 region_options = ["All"] + region_list
@@ -808,7 +819,6 @@ with tab4:
         # Ensure there is data to process
     if filtered_hcm_4.empty:
         st.warning("No data available for the selected filters in the current month.")
-        st.stop()
     # Pivot the table for Tab 4
     pivot_table_tab4 = filtered_hcm_4.pivot_table(
         index=['Resource Name','Personal Number','Employee Assignment[Primary Assignment]','Shop Name'],
@@ -828,7 +838,6 @@ with tab4:
     pivot_table_tab4_reset.columns = [col.replace(' ', '_') for col in pivot_table_tab4_reset.columns]
     if pivot_table_tab4_reset.empty:
             st.warning("No data available to display.")
-            st.stop()
 
     # Format all numeric columns to one decimal point
     numeric_columns_in_pivot_tab4 = pivot_table_tab4_reset.select_dtypes(include=['float64', 'int64']).columns
@@ -841,7 +850,6 @@ with tab4:
 
     if df_tab4.empty:
         st.warning("No data available for the selected filters. Adjust your selection and try again.")
-        st.stop()
      # JavaScript code for cell styling
     js_code = JsCode("""
         function(params) {

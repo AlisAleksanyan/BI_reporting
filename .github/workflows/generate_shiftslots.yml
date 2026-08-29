@@ -29,16 +29,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          SNAPSHOT_DATE=$(TZ=Europe/Madrid date +"%Y-%m-%d")
           python generate_shiftslots.py \
             --template shiftslots/shiftslots_2025-09-01.xlsx \
             --outdir shiftslots \
-            --range $(date -u +"%Y-%m-%d") $(date -u +"%Y-%m-%d")
+            --dates "$SNAPSHOT_DATE"
+
+      - name: Delete snapshots not used by the app
+        run: |
+          SNAPSHOT_DATE=$(TZ=Europe/Madrid date +"%Y-%m-%d")
+          python cleanup_shiftslots.py \
+            --directory shiftslots \
+            --today "$SNAPSHOT_DATE" \
+            --protect shiftslots_2025-09-01.xlsx
 
       - name: Commit and push updates
         if: success()
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add shiftslots/*.xlsx || true
+          git add -A shiftslots
           git commit -m "Auto-update shiftslots ($(date))" || echo "No changes"
           git push
